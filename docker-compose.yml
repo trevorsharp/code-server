@@ -1,0 +1,28 @@
+services:
+  code-server:
+    build: 
+      context: ./setup
+      args:
+        USERNAME: sharp
+        USER_UID: 502
+        USER_GID: 20
+    restart: unless-stopped
+    container_name: code-server
+    hostname: work-code-server
+    ports:
+      - "2222:22"
+      - "19876:19876"
+      - "127.0.0.1:4096:4096"
+    volumes:
+      - ./projects:/home/sharp/projects
+      - ./features:/home/sharp/features
+      - ~/Downloads:/home/sharp/Downloads
+      - ./data/certs:/home/sharp/certs:ro
+      - ./data/ssh:/home/sharp/.ssh:ro
+      - ./data/ssh-host:/etc/ssh/host_keys:ro
+      - ./data/gitconfig:/home/sharp/.gitconfig:ro
+      - ./data/vscode-server:/home/sharp/.vscode-server
+      - ./data/azure:/home/sharp/.azure
+      - ./data/gcloud:/home/sharp/.config/gcloud
+      - ./data/opencode-config:/home/sharp/.config/opencode
+      - ./data/opencode-storage:/home/sharp/.local/share/opencode
