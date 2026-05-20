@@ -4,7 +4,7 @@ services:
       context: ./setup
       args:
         USERNAME: sharp
-        USER_UID: 502
+        USER_UID: 504
         USER_GID: 20
     restart: unless-stopped
     container_name: code-server

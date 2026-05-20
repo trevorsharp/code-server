@@ -1,4 +1,10 @@
 .DS_Store
-data/
+node_modules/
+package-lock.json
+bun.lock*
+
 features/
 projects/
+data/*
+
+!data/opencode-config/
