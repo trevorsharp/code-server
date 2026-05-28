@@ -1,32 +1,180 @@
 #!/bin/bash
 
 # get-pr-feedback.sh
-# Fetches and formats PR feedback from Azure DevOps
-# Usage: ./get-pr-feedback.sh <org-base-url> <pr-id>
-# Example: ./get-pr-feedback.sh "https://carvanadev.visualstudio.com" 12345
+# Fetches and formats PR feedback from Azure DevOps or GitHub.
+#
+# Azure DevOps usage: ./get-pr-feedback.sh <org-base-url> <pr-id>
+#   Example: ./get-pr-feedback.sh "https://carvanadev.visualstudio.com" 12345
+#
+# GitHub usage:       ./get-pr-feedback.sh <github-pr-url>
+#   Example: ./get-pr-feedback.sh "https://github.com/owner/repo/pull/42"
 
 set -euo pipefail
 
-# Parse arguments
-if [[ $# -lt 2 ]]; then
-  echo "Usage: $0 <org-base-url> <pr-id>" >&2
-  exit 1
-fi
+# ---------------------------------------------------------------------------
+# GitHub handling
+# ---------------------------------------------------------------------------
 
-ORG_BASE_URL="$1"
-PR_ID="$2"
+run_github() {
+  local pr_url="$1"
 
-# Validate org URL
-if [[ ! "$ORG_BASE_URL" =~ ^https?:// ]]; then
-  echo "Error: Org URL must start with http:// or https://" >&2
-  exit 1
-fi
+  # Parse owner/repo/number from the URL
+  if [[ ! "$pr_url" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
+    echo "Error: Not a valid GitHub PR URL (expected .../{owner}/{repo}/pull/{number})" >&2
+    exit 1
+  fi
+  local owner="${BASH_REMATCH[1]}"
+  local repo="${BASH_REMATCH[2]}"
+  local pr_id="${BASH_REMATCH[3]}"
 
-# Validate PR ID is numeric
-if ! [[ "$PR_ID" =~ ^[0-9]+$ ]]; then
-  echo "Error: PR ID must be numeric" >&2
-  exit 1
-fi
+  if ! command -v gh &> /dev/null; then
+    echo "Error: GitHub CLI ('gh') is not installed." >&2
+    exit 1
+  fi
+  if ! gh auth status &> /dev/null; then
+    echo "Error: Authentication failed. Run 'gh auth login' to authenticate." >&2
+    exit 1
+  fi
+
+  local api_repo="repos/$owner/$repo"
+
+  TEMP_DIR=$(mktemp -d)
+  trap "rm -rf $TEMP_DIR" EXIT
+
+  local metadata_file="$TEMP_DIR/metadata.json"
+  local review_comments_file="$TEMP_DIR/review_comments.json"
+  local reviews_file="$TEMP_DIR/reviews.json"
+  local issue_comments_file="$TEMP_DIR/issue_comments.json"
+
+  echo "Fetching PR metadata..." >&2
+  if ! gh api "$api_repo/pulls/$pr_id" > "$metadata_file" 2>"$TEMP_DIR/err"; then
+    if grep -q "401\|403" "$TEMP_DIR/err"; then
+      echo "Error: Authentication failed. Run 'gh auth login' to authenticate." >&2
+    else
+      echo "Error: Failed to fetch PR metadata" >&2
+      cat "$TEMP_DIR/err" >&2
+    fi
+    exit 1
+  fi
+
+  echo "Fetching review comments..." >&2
+  gh api --paginate "$api_repo/pulls/$pr_id/comments" > "$review_comments_file"
+
+  echo "Fetching reviews..." >&2
+  gh api --paginate "$api_repo/pulls/$pr_id/reviews" > "$reviews_file"
+
+  echo "Fetching PR-level comments..." >&2
+  gh api --paginate "$api_repo/issues/$pr_id/comments" > "$issue_comments_file"
+
+  # Header
+  local pr_title pr_state created_by source_branch target_branch
+  pr_title=$(jq -r '.title // "N/A"' "$metadata_file")
+  pr_state=$(jq -r '.state // "N/A"' "$metadata_file")
+  created_by=$(jq -r '.user.login // "Unknown"' "$metadata_file")
+  source_branch=$(jq -r '.head.ref // ""' "$metadata_file")
+  target_branch=$(jq -r '.base.ref // ""' "$metadata_file")
+
+  echo "# PR #$pr_id: $pr_title"
+  echo ""
+  echo "- Status: $pr_state"
+  echo "- Author: $created_by"
+  echo "- Branch: $source_branch -> $target_branch"
+
+  # Inline review comments, grouped by file. Threading is via in_reply_to_id,
+  # so we group replies under their root comment.
+  jq -r '
+    # Index comments by id so replies can find their root
+    (reduce .[] as $c ({}; .[($c.id|tostring)] = $c)) as $byId |
+
+    # Resolve the root (top-level) comment id for any comment
+    def rootId($c):
+      if ($c.in_reply_to_id // null) == null then ($c.id|tostring)
+      else rootId($byId[($c.in_reply_to_id|tostring)]) end;
+
+    [.[] | . as $c |
+      select((.user.type // "") != "Bot") | {
+      rootId: rootId($c),
+      filePath: (.path // "PR-level"),
+      line: (.line // .original_line // null),
+      startLine: (.start_line // .original_start_line // null),
+      author: (.user.login // "Unknown"),
+      content: (.body // "" | gsub("\\n+$"; "") | gsub("\\n{3,}"; "\n\n"))
+    }] |
+
+    # Group into threads by root comment id
+    group_by(.rootId) |
+    map({
+      filePath: .[0].filePath,
+      line: .[0].line,
+      startLine: .[0].startLine,
+      comments: [.[] | {author, content}]
+    }) |
+
+    # Group threads by file
+    group_by(.filePath) |
+    to_entries[] |
+    .value as $threads |
+    "\n## \($threads[0].filePath)\n",
+    ($threads[] | . as $t |
+      (if $t.line != null then
+        if $t.startLine != null and $t.startLine != $t.line then
+          "Lines \($t.startLine)-\($t.line)"
+        else
+          "Line \($t.line)"
+        end
+      else "" end) as $loc |
+      (if $loc != "" then "- **\($loc)**" else "- **General**" end),
+      ($t.comments[] | "  - **\(.author):** \(.content)"),
+      ""
+    )
+  ' "$review_comments_file"
+
+  # Review summaries (state + body)
+  jq -r '
+    [.[] | select((.user.type // "") != "Bot") | select((.body // "") != "" or (.state // "") == "CHANGES_REQUESTED" or (.state // "") == "APPROVED")] |
+    if length > 0 then
+      "\n## Reviews\n",
+      (.[] |
+        "- **\(.user.login // "Unknown")** [\(.state // "COMMENTED")]",
+        (if (.body // "") != "" then
+          "  - \(.body | gsub("\\n+$"; "") | gsub("\\n{3,}"; "\n\n"))"
+        else empty end)
+      )
+    else empty end
+  ' "$reviews_file"
+
+  # PR-level discussion comments
+  jq -r '
+    [.[] | select((.user.type // "") != "Bot")] |
+    if length > 0 then
+      "\n## PR-level Comments\n",
+      (.[] |
+        "- **\(.user.login // "Unknown"):** \(.body // "" | gsub("\\n+$"; "") | gsub("\\n{3,}"; "\n\n"))"
+      )
+    else empty end
+  ' "$issue_comments_file"
+
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Azure DevOps handling
+# ---------------------------------------------------------------------------
+
+run_azure() {
+  local pr_url="$1"
+
+  # Parse org base URL (scheme + host) and PR ID from the URL.
+  # Example: https://carvanadev.visualstudio.com/.../_git/Repo/pullrequest/12345
+  if [[ ! "$pr_url" =~ ^(https?://[^/]+).*/pullrequest/([0-9]+) ]]; then
+    echo "Error: Not a valid Azure DevOps PR URL (expected .../pullrequest/{number})" >&2
+    exit 1
+  fi
+  ORG_BASE_URL="${BASH_REMATCH[1]}"
+  PR_ID="${BASH_REMATCH[2]}"
+
+  azure_main
+}
 
 # Helper function to make API calls with error handling
 call_api() {
@@ -58,6 +206,7 @@ call_api() {
   return 0
 }
 
+azure_main() {
 # Create temp files
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
@@ -127,7 +276,7 @@ jq -r '
       filePath: (.threadContext.filePath // "PR-level"),
       startLine: (.threadContext.rightFileStart.line // null),
       endLine: (.threadContext.rightFileEnd.line // null),
-      status: (.status // "general"),
+      status: (if ([.comments[] | select(.commentType != "system")] | all(.isDeleted == true)) then "deleted" else (.status // "general") end),
       comments: [.comments[] | select(.commentType != "system") | {
         author: (.author.displayName // "Unknown"),
         content: (.content // "" | gsub("\\n+$"; "") | gsub("\\n{3,}"; "\n\n"))
@@ -179,3 +328,25 @@ jq -r '
 ' "$THREADS_FILE"
 
 exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch: detect provider from the PR URL
+# ---------------------------------------------------------------------------
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <pr-url>" >&2
+  echo "  Supports Azure DevOps and GitHub pull request URLs." >&2
+  exit 1
+fi
+
+PR_URL="$1"
+
+case "$PR_URL" in
+  *github.com*)
+    run_github "$PR_URL"
+    ;;
+  *)
+    run_azure "$PR_URL"
+    ;;
+esac

@@ -11,8 +11,14 @@ services:
     hostname: work-code-server
     ports:
       - "2222:22"
-      - "19876:19876"
+      - "127.0.0.1:19876:19876"
       - "127.0.0.1:4096:4096"
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:3002:3002"
+      - "127.0.0.1:5000:5000"
+      - "127.0.0.1:5001:5001"
+      - "127.0.0.1:5002:5002"
     volumes:
       - ./projects:/home/sharp/projects
       - ./features:/home/sharp/features
@@ -23,6 +29,7 @@ services:
       - ./data/gitconfig:/home/sharp/.gitconfig:ro
       - ./data/vscode-server:/home/sharp/.vscode-server
       - ./data/azure:/home/sharp/.azure
+      - ./data/gh:/home/sharp/.config/gh
       - ./data/gcloud:/home/sharp/.config/gcloud
       - ./data/opencode-config:/home/sharp/.config/opencode
       - ./data/opencode-storage:/home/sharp/.local/share/opencode

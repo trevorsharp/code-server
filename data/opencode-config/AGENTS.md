@@ -30,7 +30,8 @@ Push current branch and create or find an Azure DevOps pull request.
 pr [title] [target-branch] [description]
 ```
 
-NOTE: If the current branch is 'master', 'main', or starts with 'opencode/', make a new branch named something meaningful before pushing or creating a PR; otherwise, use the current branch for the PR.
+NOTE: Always use the current branch for committing and pushing changes unless the current branch is 'master', 'main', or starts with 'opencode/', in which case, make a new branch named something meaningful before pushing or creating a PR.
+NOTE: Don't add a "[XXXX]" prefix to PR titles you pass to the script. These may already be added by the script.
 
 # Review Agents
 
