@@ -27,7 +27,7 @@ Pass the PR URL directly to the bundled `get-pr-feedback.sh` script. It detects 
 provider from the URL, fetches the feedback, and prints structured markdown:
 
 ```bash
-/path/to/get-pr-feedback.sh "<pr-url>"
+./get-pr-feedback.sh "<pr-url>"
 ```
 
 ## Error Handling

@@ -81,6 +81,9 @@ RUN curl -fsSL https://bun.sh/install | bash
 # Install OpenCode
 RUN curl -fsSL https://opencode.ai/install | bash
 
+# Install workspace CLI
+RUN curl -fsSL https://static.fastly.carvanatech.com/workspace-cli/install.sh | bash
+
 # Install CSharpier globally
 RUN dotnet tool install csharpier --global --version 1.1.1
 
