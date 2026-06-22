@@ -29,7 +29,8 @@
       ],
       "extensions": [
         ".cs",
-        ".csproj"
+        ".csproj",
+        ".slnx"
       ]
     }
   },

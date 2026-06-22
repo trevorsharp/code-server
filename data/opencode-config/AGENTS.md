@@ -4,7 +4,7 @@ Write readable, self-documenting code. Keep comments that are already in the cod
 
 # Variables
 
-When writing lambda functions, use meaningful variable names.
+When writing lambda functions, use meaningful variable names. (Except for ValidationResult when v => should be used)
 
 # Tests
 
