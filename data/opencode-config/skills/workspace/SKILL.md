@@ -23,7 +23,7 @@ Prefer Title Case workspace names when creating or suggesting workspace names, s
 
 ## Targeting
 
-Most commands infer the workspace by walking up from the current directory to a `.workspace` file. Use `--workspace <name|slug|path>` to override. Path values must point to a directory containing `.workspace`.
+Most commands infer the workspace by walking up from the current directory to a `.workspace` file. Use `--workspace <name|slug|path>` to override. Path values must point to a directory containing `.workspace`. Name values can match the workspace directory slug or the display name stored in `.workspace`.
 
 ## Safety
 
@@ -31,4 +31,4 @@ Removal does not delete branches. Without `--force`, `rm` requires no tracked ch
 
 ## Setup Script
 
-After `create` or `add`, the CLI initializes submodules when `.gitmodules` exists, then runs the configured setup script. `--no-setup` skips both. The script receives `<source-path> <worktree-path>` and runs with cwd set to the worktree. Run `workspace add` once per additional folder.
+After `create` or `add`, the CLI initializes submodules when `.gitmodules` exists, then runs the configured setup script. `--no-setup` skips both. `--background-setup` runs both in a detached background process and prints the temp log file path. The script receives `<source-path> <worktree-path>` and runs with cwd set to the worktree. Run `workspace add` once per additional folder.
