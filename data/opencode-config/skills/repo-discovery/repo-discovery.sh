@@ -120,7 +120,7 @@ search_azure() {
   while IFS= read -r repo; do
     if [[ "${repo,,}" == *"${SEARCH_TERM,,}"* ]]; then
       local clone_url result
-      clone_url="$AZURE_ORG_NAME@vs-ssh.visualstudio.com:v3/$AZURE_ORG_NAME/$AZURE_PROJECT/$repo"
+      clone_url="$AZURE_ORG_URL/$AZURE_PROJECT/_git/$repo"
       result=$(jq -n \
         --arg provider "azure" \
         --arg scope "$AZURE_PROJECT" \

@@ -31,6 +31,7 @@ services:
       - ./data/ssh:/home/sharp/.ssh:ro
       - ./data/ssh-host:/etc/ssh/host_keys:ro
       - ./data/gitconfig:/home/sharp/.gitconfig:ro
+      - ./data/git-credentials:/home/sharp/.git-credentials:ro
       - ./data/vscode-server:/home/sharp/.vscode-server
       - ./data/azure:/home/sharp/.azure
       - ./data/gh:/home/sharp/.config/gh

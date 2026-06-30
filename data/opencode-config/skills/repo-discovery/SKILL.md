@@ -17,7 +17,7 @@ Use the bundled script only for repository search. Always choose a scoped provid
     "provider": "azure",
     "scope": "Carvana.Underwriting",
     "repo": "Carvana.Underwriting",
-    "cloneUrl": "CarvanaDev@vs-ssh.visualstudio.com:v3/CarvanaDev/Carvana.Underwriting/Carvana.Underwriting"
+    "cloneUrl": "https://dev.azure.com/CarvanaDev/Carvana.Underwriting/_git/Carvana.Underwriting"
   }
 ]
 ```
@@ -27,6 +27,8 @@ Azure DevOps search:
 ```bash
 ./repo-discovery.sh "underwriting" --azure-project "Carvana.Underwriting"
 ```
+
+Azure DevOps results use HTTPS clone URLs. GitHub results use SSH clone URLs.
 
 If the Azure DevOps project is unclear, list projects and pick the likely one from the names. Use `Carvana.Transaction` by default when there is no better context.
 
