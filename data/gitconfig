@@ -1,0 +1,10 @@
+[url "CarvanaDev@vs-ssh.visualstudio.com:v3/CarvanaDev/Carvana.Transaction/"]
+	insteadOf = https://carvanadev.visualstudio.com/Carvana.Transaction/_git/
+	insteadOf = https://carvanadev.visualstudio.com/DefaultCollection/Carvana.Transaction/_git/
+[user]
+	name = Trevor Sharp
+	email = trevor.sharp@carvana.com
+[core]
+	editor = nano
+[push]
+    autoSetupRemote = true

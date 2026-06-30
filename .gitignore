@@ -9,3 +9,4 @@ data/*
 
 !data/opencode-config/
 !data/NuGet.Config.template
+!data/gitconfig
