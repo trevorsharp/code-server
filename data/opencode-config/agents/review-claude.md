@@ -2,7 +2,7 @@
 description: Reviews code changes with Claude without editing files
 mode: subagent
 hidden: true
-model: google-vertex-anthropic/claude-opus-4-7@default
+model: github-copilot/claude-opus-4.8
 tools:
   write: false
   edit: false
