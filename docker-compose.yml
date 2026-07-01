@@ -12,15 +12,19 @@ services:
     environment:
       - OPENCODE_FORK=1
     ports:
+      # SSH
       - "2222:22"
-      - "127.0.0.1:19876:19876"
+      # OpenCode
       - "127.0.0.1:4096:4096"
+      # Dev Ports
       - "127.0.0.1:3000:3000"
       - "127.0.0.1:3001:3001"
       - "127.0.0.1:3002:3002"
       - "127.0.0.1:5000:5000"
       - "127.0.0.1:5001:5001"
       - "127.0.0.1:5002:5002"
+      # OAuth Callbacks
+      - "127.0.0.1:19876:19876"
     volumes:
       - ./projects:/home/sharp/projects
       - ./features:/home/sharp/features

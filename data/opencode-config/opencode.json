@@ -76,6 +76,11 @@
       "url": "https://fastlane-mcp.cvnacorp.com/mcp",
       "enabled": false
     },
+    "Carvana Publish": {
+      "type": "remote",
+      "url": "https://publish-mcp.cvnacorp.com/mcp",
+      "enabled": false
+    },
     "Datadog": {
       "type": "remote",
       "url": "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp",
