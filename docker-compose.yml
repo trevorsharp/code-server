@@ -40,4 +40,12 @@ services:
       - ./data/opencode-storage:/home/sharp/.local/share/opencode
       - ./data/workspace-config:/home/sharp/.config/workspace
       - ./data/claude:/home/sharp/.claude
+      - ./data/codex:/home/sharp/.codex
+      - ./data/AGENTS.md:/home/sharp/.config/opencode/AGENTS.md:ro
+      - ./data/AGENTS.md:/home/sharp/.claude/CLAUDE.md:ro
+      - ./data/AGENTS.md:/home/sharp/.codex/AGENTS.md:ro
+      - ./data/skills:/home/sharp/.config/opencode/skills
+      - ./data/skills:/home/sharp/.claude/skills
+      - ./data/skills:/home/sharp/.codex/skills
+
 

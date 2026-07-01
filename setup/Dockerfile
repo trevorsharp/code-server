@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y \
     unzip \
     apt-transport-https \
     gnupg \
-    lsof
+    lsof \
+    bubblewrap
 
 RUN groupadd --gid ${USER_GID} ${USERNAME} 2>/dev/null || groupmod -n ${USERNAME} $(getent group ${USER_GID} | cut -d: -f1) || true \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} -s /bin/bash 2>/dev/null || usermod -l ${USERNAME} -d /home/${USERNAME} -m $(getent passwd ${USER_UID} | cut -d: -f1) || true \
@@ -87,11 +88,11 @@ RUN curl -fsSL https://static.fastly.carvanatech.com/workspace-cli/install.sh | 
 # Install CSharpier globally
 RUN dotnet tool install csharpier --global --version 1.1.1
 
+# Install Codex
+RUN curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh
+
 # Install Claude Code
-# RUN curl -fsSL https://claude.ai/install.sh | bash \
-#     && echo "export CLAUDE_CODE_USE_VERTEX=1" >> /home/${USERNAME}/.bashrc \
-#     && echo "export CLOUD_ML_REGION=us-east5" >> /home/${USERNAME}/.bashrc \
-#     && echo "export ANTHROPIC_VERTEX_PROJECT_ID=crv-engineering-ai-prd-8058" >> /home/${USERNAME}/.bashrc
+RUN curl -fsSL https://claude.ai/install.sh | bash
 
 USER root
 
