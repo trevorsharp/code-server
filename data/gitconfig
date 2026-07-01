@@ -6,4 +6,4 @@
 [push]
     autoSetupRemote = true
 [credential]
-	helper = store
+	helper = store --file /home/sharp/.git-data/git-credentials
