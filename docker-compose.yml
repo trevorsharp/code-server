@@ -39,7 +39,6 @@ services:
       - ./data/vscode-server:/home/sharp/.vscode-server
       - ./data/azure:/home/sharp/.azure
       - ./data/gh:/home/sharp/.config/gh
-      - ./data/gcloud:/home/sharp/.config/gcloud
       - ./data/opencode-config:/home/sharp/.config/opencode
       - ./data/opencode-storage:/home/sharp/.local/share/opencode
       - ./data/workspace-config:/home/sharp/.config/workspace
