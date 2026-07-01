@@ -47,5 +47,3 @@ services:
       - ./data/skills:/home/sharp/.config/opencode/skills
       - ./data/skills:/home/sharp/.claude/skills
       - ./data/skills:/home/sharp/.codex/skills
-
-
