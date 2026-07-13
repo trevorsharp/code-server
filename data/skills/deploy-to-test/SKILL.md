@@ -143,6 +143,10 @@ Tell the user:
 - A clickable link to monitor the pipeline run
 - Which source and tests branches were used
 
+### Step 7: Report to Slack (Optional)
+
+If and only if the user asks to post to Slack, send a message to the dev channel simply saying "Taking over XYZ in TEST" where XYZ is the service name.
+
 ## Error Handling
 
 - **`az` not found**: Tell the user to install Azure CLI

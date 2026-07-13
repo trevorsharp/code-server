@@ -50,27 +50,37 @@ If the GitHub org is unclear, list accessible orgs and pick the likely one from 
 
 ## Clone
 
-After selecting a result, choose the local folder name and clone with the result's `cloneUrl`:
+After selecting a result, choose the local folder name from the repository name and clone under the dedicated repo-discovery folder:
 
 ```bash
-git clone "<cloneUrl>" "$HOME/projects/<chosen-local-name>"
+mkdir -p "$HOME/projects/RepoDiscovery"
+git clone "<cloneUrl>" "$HOME/projects/RepoDiscovery/<chosen-local-name>"
 ```
 
-If `$HOME/projects/<chosen-local-name>` already exists, do not reclone. Use the existing folder.
+If `$HOME/projects/RepoDiscovery/<chosen-local-name>` already exists, do not reclone. Use the existing folder.
 
-Default local folder naming removes leading `Carvana.` prefixes, uses CamelCase, and follows the naming convention of existing repos. For example:
+Default local folder naming rules:
 
-- `Carvana.Underwriting` -> `~/projects/Underwriting`
-- `Carvana.Some.Service` -> `~/projects/SomeService`
-- `PurchaseApi` -> `~/projects/PurchaseApi`
+- Start from the repo's final name exactly as reported by search, not the Azure DevOps project name or GitHub org.
+- Remove only a leading `Carvana.` prefix.
+- Convert every normalized name to PascalCase.
+- For dot-, dash-, underscore-, or space-separated names, remove separators and capitalize each segment.
+- For existing camelCase names, capitalize the first character.
+- Preserve existing acronym casing within segments.
+- Do not add environment, team, provider, or project-name prefixes unless the repo name already contains them.
+- If the normalized name conflicts with an unrelated local folder inside `~/projects/RepoDiscovery`, ask before choosing an alternate name.
+
+Examples:
+
+- `Carvana.Underwriting` -> `~/projects/RepoDiscovery/Underwriting`
+- `Carvana.Some.Service` -> `~/projects/RepoDiscovery/SomeService`
+- `Carvana.Purchase.API` -> `~/projects/RepoDiscovery/PurchaseAPI`
+- `PurchaseApi` -> `~/projects/RepoDiscovery/PurchaseApi`
+- `purchaseApi` -> `~/projects/RepoDiscovery/PurchaseApi`
 
 ## Workspace
 
-If the current directory is inside a workspace and the user wants the repo available here, use the `workspace` skill to add it with background setup:
-
-```bash
-workspace add "$HOME/projects/<chosen-local-name>" --background-setup
-```
+If the current directory is inside a workspace, first clone the repo into `~/projects/RepoDiscovery`, then use the `workspace` skill to add the cloned folder.
 
 ## Error Handling
 

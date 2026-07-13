@@ -9,7 +9,7 @@ Use `workspace` to manage named multi-repo workspace folders.
 
 ## Naming
 
-Prefer Title Case workspace names when creating or suggesting workspace names, such as `Customer Portal Refresh` instead of `customer-portal-refresh`.
+Preserve the user's casing for workspace display names. Prefer Title Case only when creating or suggesting a name yourself, such as `Customer Portal Refresh` instead of `customer-portal-refresh`.
 
 ## Core Commands
 

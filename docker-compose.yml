@@ -28,6 +28,7 @@ services:
     volumes:
       - ./projects:/home/sharp/projects
       - ./features:/home/sharp/features
+      - ./opencode:/home/sharp/opencode
       - ~/Downloads:/home/sharp/Downloads
       - ./data/npmrc:/home/sharp/.npmrc:ro
       - ./data/NuGet.Config:/home/sharp/.nuget/NuGet/NuGet.Config:ro

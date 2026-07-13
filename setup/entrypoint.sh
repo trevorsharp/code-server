@@ -4,7 +4,7 @@ set -e
 OPENCODE_CMD="opencode"
 
 if [ "${OPENCODE_FORK:-0}" = "1" ]; then
-  cp /home/sharp/projects/opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode /home/sharp/.opencode/bin/opencode-fork
+  cp /home/sharp/opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode /home/sharp/.opencode/bin/opencode-fork
   OPENCODE_CMD="opencode-fork"
 fi
 

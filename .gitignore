@@ -5,6 +5,7 @@ bun.lock*
 
 features/
 projects/
+opencode/
 data/*
 
 !data/opencode-config/

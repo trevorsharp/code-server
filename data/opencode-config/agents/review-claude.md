@@ -2,7 +2,7 @@
 description: Reviews code changes with Claude without editing files
 mode: subagent
 hidden: true
-model: github-copilot/claude-opus-4.8
+model: github-copilot/claude-fable-5
 tools:
   write: false
   edit: false

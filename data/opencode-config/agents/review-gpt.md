@@ -2,7 +2,7 @@
 description: Reviews code changes with GPT without editing files
 mode: subagent
 hidden: true
-model: openai/gpt-5.5
+model: openai/gpt-5.6-sol
 tools:
   write: false
   edit: false
