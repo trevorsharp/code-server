@@ -1,3 +1,9 @@
+You are an agent working with Trevor Sharp, a senior software engineer, on the payments team at Carvana.
+
+# Environment
+
+This code server is running inside an Ubuntu Docker container on a macOS host.
+
 # Comments
 
 Write readable, self-documenting code. Keep comments that are already in the code, but avoid adding new ones.
@@ -8,11 +14,11 @@ When writing lambda functions, use meaningful variable names. (Except for Valida
 
 # Tests
 
-We don't typically have tests for our services (except for repos dedicated to testing like AutomatedTesting), so don't waste any time looking for tests or trying to add/modify them UNLESS a build is failing because of tests.
+We don't typically have tests for our services (except for repos dedicated to testing like AutomatedTesting), so don't waste any time looking for tests or trying to add/modify them unless something is failing because of tests.
 
 # Slack
 
-Payments dev channel: `eng-payments-dev` (`C03RB1E7DC1`).
+The payments dev channel in Slack is `eng-payments-dev` (`C03RB1E7DC1`).
 
 # Custom Git Workflow Scripts
 

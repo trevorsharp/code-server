@@ -1,0 +1,32 @@
+{
+  "$comment": "Config for the workflow plugin (~/.config/opencode/plugins/workflow.ts). A project can override any key via <worktree>/.opencode/workflow.json. Restart opencode after editing — the model list is baked into the tool description at startup. 'models' is the allowlist for per-agent model selection in workflow scripts; the 'note' fields are shown to the agent to guide selection. Empty list = agents always use the session default model.",
+  "enabled": true,
+  "models": [
+    {
+      "slug": "openai/gpt-5.6-sol",
+      "note": "Default choice. Use for implementation, code changes, browser-use fallback when Luna gets stuck, and all other general tasks. Use low, medium or high effort. Give explicit stop conditions."
+    },
+    {
+      "slug": "github-copilot/claude-fable-5",
+      "note": "Orchestrator and advisor. It is slow and expensive, so invoke selectively. Use for orchestrating or planning sub-workflows, and as an advisor/fallback when another model is stuck or has failed. Do not use for routine implementation or bulk stages. High effort only."
+    },
+    {
+      "slug": "github-copilot/claude-opus-4.8",
+      "note": "Code reviewer and judge. Use for reviewing Sol's implementations, devil's advocate, countering assumptions, judging panels. Ask for full coverage and filter the output downstream in the workflow. High effort only."
+    },
+    {
+      "slug": "openai/gpt-5.6-luna",
+      "note": "Data gatherer and browser verifier. It is fast but dumb, so invoke selectively. Use for scouting, file/symbol discovery, grep sweeps, classification, and browser use. Every browser use or verification task must include an instruction to stop and return if it gets stuck, and must have a Sol fallback agent setup to take over for it. Never use for producing code or content, review, judging, design. High effort only."
+    }
+  ],
+  "childSessions": "nested",
+  "disableAgents": [
+    "general",
+    "plan",
+    "scout",
+    "explore"
+  ],
+  "maxConcurrency": 5,
+  "maxAgentsPerRun": 100,
+  "agentTimeoutMs": 1800000
+}

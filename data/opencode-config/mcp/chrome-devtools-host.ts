@@ -5,6 +5,9 @@ import { lookup } from "node:dns/promises";
 const cdpHost = process.env.CDP_HOST || "host.docker.internal";
 const cdpPort = process.env.CDP_PORT || "9222";
 
+const browserContext =
+  "IMPORTANT: The browser runs outside this code server, has no file access, and can use localhost only on ports 3000-3002. Never use file:// or any other port.";
+
 const chromeCommand = `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome \\
   --remote-debugging-port=9222 \\
   --remote-allow-origins=* \\
@@ -53,6 +56,45 @@ const getWebSocketUrl = async () => {
 };
 
 const webSocketUrl = await getWebSocketUrl();
+
+const rewriteToolDescriptions = async (
+  stdout: ReadableStream<Uint8Array>,
+) => {
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const writeLine = (line: string) => {
+    try {
+      const message = JSON.parse(line);
+      const tools = message?.result?.tools;
+
+      if (Array.isArray(tools)) {
+        for (const tool of tools) {
+          tool.description = `${browserContext}\n\n${tool.description || ""}`;
+        }
+      }
+
+      process.stdout.write(`${JSON.stringify(message)}\n`);
+    } catch {
+      process.stdout.write(`${line}\n`);
+    }
+  };
+
+  for await (const chunk of stdout) {
+    buffer += decoder.decode(chunk, { stream: true });
+
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex !== -1) {
+      writeLine(buffer.slice(0, newlineIndex).replace(/\r$/, ""));
+      buffer = buffer.slice(newlineIndex + 1);
+      newlineIndex = buffer.indexOf("\n");
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer) writeLine(buffer);
+};
+
 const child = Bun.spawn(
   [
     "bunx",
@@ -64,7 +106,7 @@ const child = Bun.spawn(
   ],
   {
     stdin: "inherit",
-    stdout: "inherit",
+    stdout: "pipe",
     stderr: "inherit",
     env: {
       ...process.env,
@@ -73,4 +115,7 @@ const child = Bun.spawn(
   },
 );
 
-process.exit(await child.exited);
+const stdoutDone = rewriteToolDescriptions(child.stdout);
+const exitCode = await child.exited;
+await stdoutDone;
+process.exit(exitCode);
