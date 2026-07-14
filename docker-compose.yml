@@ -23,8 +23,6 @@ services:
       - "127.0.0.1:5000:5000"
       - "127.0.0.1:5001:5001"
       - "127.0.0.1:5002:5002"
-      # OAuth Callbacks
-      - "127.0.0.1:19876:19876"
     volumes:
       - ./projects:/home/sharp/projects
       - ./features:/home/sharp/features
