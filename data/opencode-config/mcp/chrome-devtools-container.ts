@@ -97,7 +97,7 @@ const child = Bun.spawn(
     "--headless",
     "--isolated",
     "--viewport",
-    "1280x720",
+    "1920x911",
     "--chromeArg=--no-sandbox",
     "--chromeArg=--disable-dev-shm-usage",
     "--chromeArg=--no-zygote",
