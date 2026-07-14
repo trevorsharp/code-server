@@ -75,11 +75,9 @@
       "type": "local",
       "command": [
         "bun",
-        "/home/sharp/.config/opencode/mcp/chrome-devtools-host.ts"
+        "/home/sharp/.config/opencode/mcp/chrome-devtools-container.ts"
       ],
       "env": {
-        "CDP_HOST": "host.docker.internal",
-        "CDP_PORT": "9222",
         "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1"
       },
       "enabled": false

@@ -197,7 +197,12 @@ function extractText(parts: any[]): string {
     .trim()
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number, what: string, onTimeout: () => Promise<void>): Promise<T> {
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  what: string,
+  onTimeout: () => Promise<void>,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)), ms)
@@ -290,7 +295,12 @@ function statusSnapshot(run: Run) {
     agentsCompleted: run.agentsCompleted,
     agentsFailed: run.agentsFailed,
     steps: run.steps
-      ? run.steps.map((s) => ({ title: s.title, started: s.started, finished: s.finished, failed: s.failed }))
+      ? run.steps.map((s) => ({
+          title: s.title,
+          started: s.started,
+          finished: s.finished,
+          failed: s.failed,
+        }))
       : undefined,
     scriptPath: path.join(run.dir, "script.js"),
     logs: run.logs.slice(-100),
@@ -455,24 +465,37 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     try {
       const url = new URL(`/session/${run.callerSessionID}/agent-card`, serverUrl)
       url.searchParams.set("directory", run.directory)
-      const headers: Record<string, string> = { "content-type": "application/json" }
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      }
       if (process.env.OPENCODE_SERVER_PASSWORD) {
         headers.authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`
       }
-      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) })
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      })
       if (res.status === 404 || res.status === 405) {
         if (agentCardsSupported === null) journal(run, { type: "agent_card_unsupported" })
         agentCardsSupported = false
         return null
       }
       if (!res.ok) {
-        journal(run, { type: "agent_card_error", status: res.status, body: (await res.text()).slice(0, 300) })
+        journal(run, {
+          type: "agent_card_error",
+          status: res.status,
+          body: (await res.text()).slice(0, 300),
+        })
         return null
       }
       agentCardsSupported = true
       return (await res.json()) as CardRef
     } catch (e: any) {
-      journal(run, { type: "agent_card_error", error: String(e?.message ?? e) })
+      journal(run, {
+        type: "agent_card_error",
+        error: String(e?.message ?? e),
+      })
       return null
     }
   }
@@ -536,7 +559,12 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     const name = opts.step ?? run.currentStep
     if (!run.steps || !name) return null
     const found = run.steps.find((s) => s.title.toLowerCase() === String(name).toLowerCase())
-    if (!found) journal(run, { type: "unknown_step", step: name, known: run.steps.map((s) => s.title) })
+    if (!found)
+      journal(run, {
+        type: "unknown_step",
+        step: name,
+        known: run.steps.map((s) => s.title),
+      })
     return found ?? null
   }
 
@@ -555,15 +583,11 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     }
     if (!opts.model) {
       throw new Error(
-        `agent("${prompt.slice(0, 40)}...") is missing opts.model — every agent must explicitly pick a model${
-          allowedModels.size > 0 ? ` from: ${[...allowedModels].join(", ")}` : ""
-        }`,
+        `agent("${prompt.slice(0, 40)}...") is missing opts.model — every agent must explicitly pick a model${allowedModels.size > 0 ? ` from: ${[...allowedModels].join(", ")}` : ""}`,
       )
     }
     if (allowedModels.size > 0 && !allowedModels.has(opts.model)) {
-      throw new Error(
-        `model "${opts.model}" is not in the configured allowlist: ${[...allowedModels].join(", ")}`,
-      )
+      throw new Error(`model "${opts.model}" is not in the configured allowlist: ${[...allowedModels].join(", ")}`)
     }
     if (opts.variant && opts.model) {
       const known = variantsBySlug.get(opts.model)
@@ -591,7 +615,12 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           body: {
             ...(cfg.childSessions === "nested" ? { parentID: run.callerSessionID } : {}),
             title: `${run.id} ${label}`,
-          },
+            metadata: {
+              background: true,
+              parentSessionId: run.callerSessionID,
+              source: "workflow",
+            },
+          } as any,
           query: { directory: run.directory },
         }),
         "session.create",
@@ -599,7 +628,13 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       sessionID = session?.id
       if (!sessionID) throw new Error(`session.create returned no id: ${safeStringify(session).slice(0, 300)}`)
       run.activeSessions.add(sessionID)
-      row = { label, model: modelLabel, status: "running", sessionID, step: step?.title }
+      row = {
+        label,
+        model: modelLabel,
+        status: "running",
+        sessionID,
+        step: step?.title,
+      }
       run.agentRows.push(row)
       if (step) {
         step.started++
@@ -626,7 +661,11 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
                 ...(opts.variant ? { variant: opts.variant } : {}),
                 ...(opts.agent ? { agent: opts.agent } : {}),
                 ...(opts.system ? { system: opts.system } : {}),
-                tools: { workflow_run: false, workflow_status: false, workflow_cancel: false },
+                tools: {
+                  workflow_run: false,
+                  workflow_status: false,
+                  workflow_cancel: false,
+                },
               },
             }) as Promise<any>,
             timeoutMs,
@@ -640,7 +679,16 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
 
         if (!opts.schema) {
           run.agentsCompleted++
-          journal(run, { type: "agent", label, sessionID, model: opts.model ?? null, variant: opts.variant ?? null, durationMs: Date.now() - startedAt, prompt, result: reply })
+          journal(run, {
+            type: "agent",
+            label,
+            sessionID,
+            model: opts.model ?? null,
+            variant: opts.variant ?? null,
+            durationMs: Date.now() - startedAt,
+            prompt,
+            result: reply,
+          })
           writeStatus(run)
           if (step) step.finished++
           if (row) row.status = "completed"
@@ -652,7 +700,16 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         const errors = parsed.ok ? schemaErrors(parsed.value, opts.schema) : [parsed.error]
         if (parsed.ok && errors.length === 0) {
           run.agentsCompleted++
-          journal(run, { type: "agent", label, sessionID, model: opts.model ?? null, variant: opts.variant ?? null, durationMs: Date.now() - startedAt, prompt, result: parsed.value })
+          journal(run, {
+            type: "agent",
+            label,
+            sessionID,
+            model: opts.model ?? null,
+            variant: opts.variant ?? null,
+            durationMs: Date.now() - startedAt,
+            prompt,
+            result: parsed.value,
+          })
           writeStatus(run)
           if (step) step.finished++
           if (row) row.status = "completed"
@@ -664,7 +721,13 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             `agent "${label}" reply failed schema validation after ${attempt + 1} attempts: ${errors.join("; ").slice(0, 500)}. Last reply: ${reply.slice(0, 500)}`,
           )
         }
-        journal(run, { type: "schema_retry", label, sessionID, attempt: attempt + 1, errors })
+        journal(run, {
+          type: "schema_retry",
+          label,
+          sessionID,
+          attempt: attempt + 1,
+          errors,
+        })
         text = `Your previous reply did not satisfy the required JSON Schema. Problems: ${errors.join("; ")}. Reply again with ONLY the corrected JSON value — no prose, no fences.`
       }
     } catch (e: any) {
@@ -696,13 +759,21 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       return Promise.all(
         thunks.map(async (thunk, index) => {
           if (typeof thunk !== "function") {
-            journal(run, { type: "parallel_error", index, error: "item is not a function" })
+            journal(run, {
+              type: "parallel_error",
+              index,
+              error: "item is not a function",
+            })
             return null
           }
           try {
             return await thunk()
           } catch (e: any) {
-            journal(run, { type: "parallel_error", index, error: String(e?.message ?? e) })
+            journal(run, {
+              type: "parallel_error",
+              index,
+              error: String(e?.message ?? e),
+            })
             return null
           }
         }),
@@ -718,7 +789,11 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             try {
               value = await stage(value, item, index)
             } catch (e: any) {
-              journal(run, { type: "pipeline_error", index, error: String(e?.message ?? e) })
+              journal(run, {
+                type: "pipeline_error",
+                index,
+                error: String(e?.message ?? e),
+              })
               return null
             }
           }
@@ -782,7 +857,10 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     const artifacts = `Artifacts: ${run.dir} (script.js — the orchestration script, result.json, journal.jsonl with every agent's full prompt+reply, status.json)`
     if (run.status === "completed") {
       const resultJson = safeStringify(run.result ?? null, 2)
-      const excerpt = resultJson.length > 6000 ? resultJson.slice(0, 6000) + "\n... (truncated — full value in result.json)" : resultJson
+      const excerpt =
+        resultJson.length > 6000
+          ? resultJson.slice(0, 6000) + "\n... (truncated — full value in result.json)"
+          : resultJson
       return `${header}\nResult:\n${excerpt}\n${artifacts}\nThis is an automated completion notification from the workflow plugin, not a user message. Summarize this result for the user now, relating it to what they originally asked for.`
     }
     return `${header}\nError: ${run.error ?? "unknown"}\n${artifacts}\nThis is an automated failure notification from the workflow plugin, not a user message. Inspect the journal if needed, tell the user what happened, and decide whether to retry with a corrected script.`
@@ -809,7 +887,11 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     } finally {
       run.finishedAt = Date.now()
       writeStatus(run)
-      journal(run, { type: "finished", status: run.status, error: run.error ?? null })
+      journal(run, {
+        type: "finished",
+        status: run.status,
+        error: run.error ?? null,
+      })
       await pushRunCard(run, true)
       if (!run.cancelled) {
         await wakeCaller(run, completionMessage(run))
@@ -846,7 +928,11 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     for (const id of aborting) {
       ;(client.session.abort({ path: { id } }) as Promise<any>).catch(() => {})
     }
-    journal(run, { type: "cancel_requested", reason, abortedSessions: aborting.length })
+    journal(run, {
+      type: "cancel_requested",
+      reason,
+      abortedSessions: aborting.length,
+    })
     writeStatus(run)
     return aborting.length
   }
@@ -870,7 +956,10 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       if (cfg.disableAgents.length === 0) return
       opencodeConfig.agent = opencodeConfig.agent ?? {}
       for (const name of cfg.disableAgents) {
-        opencodeConfig.agent[name] = { ...opencodeConfig.agent[name], disable: true }
+        opencodeConfig.agent[name] = {
+          ...opencodeConfig.agent[name],
+          disable: true,
+        }
       }
     },
     // Variants load in the background after startup; rebuild the description
@@ -886,7 +975,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         args: {
           script: tool.schema
             .string()
-            .describe("The workflow script: plain JavaScript forming the body of an async function, using the injected primitives (agent/parallel/pipeline/log/sleep/input/runId). Return the final result."),
+            .describe(
+              "The workflow script: plain JavaScript forming the body of an async function, using the injected primitives (agent/parallel/pipeline/log/sleep/input/runId). Return the final result.",
+            ),
           name: tool.schema
             .string()
             .optional()
@@ -894,7 +985,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           input: tool.schema
             .any()
             .optional()
-            .describe("Optional JSON value exposed to the script as `input`. Pass real arrays/objects, not JSON-encoded strings."),
+            .describe(
+              "Optional JSON value exposed to the script as `input`. Pass real arrays/objects, not JSON-encoded strings.",
+            ),
           steps: tool.schema
             .array(
               tool.schema.union([
@@ -953,9 +1046,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
               const trimmed = s.title.trim()
               const declaredModel =
                 typeof s.model === "string" && s.model
-                  ? `${s.model.includes("/") ? s.model.slice(s.model.indexOf("/") + 1) : s.model}${
-                      typeof s.variant === "string" && s.variant ? ` (${s.variant})` : ""
-                    }`
+                  ? `${s.model.includes("/") ? s.model.slice(s.model.indexOf("/") + 1) : s.model}${typeof s.variant === "string" && s.variant ? ` (${s.variant})` : ""}`
                   : undefined
               return {
                 title: `${trimmed[0]!.toUpperCase()}${trimmed.slice(1)}`,
@@ -976,7 +1067,11 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           }
           liveRuns.set(run.id, run)
           writeStatus(run)
-          journal(run, { type: "started", name: run.name, callerSessionID: run.callerSessionID })
+          journal(run, {
+            type: "started",
+            name: run.name,
+            callerSessionID: run.callerSessionID,
+          })
 
           void executeRun(run, args.script, args.input).catch((e) => {
             console.error(`[workflow plugin] run ${run.id} crashed: ${e}`)
@@ -1008,7 +1103,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
               .join("\n")
           }
           const live = liveRuns.get(args.runId)
-          const status = live ? statusSnapshot(live) : readJsonIfExists(path.join(cfg.dataDir, args.runId, "status.json"))
+          const status = live
+            ? statusSnapshot(live)
+            : readJsonIfExists(path.join(cfg.dataDir, args.runId, "status.json"))
           if (!status) return `No run found with id ${args.runId}.`
           if (!live && status.status === "running") {
             status.status = "interrupted"
@@ -1020,7 +1117,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           const resultPath = path.join(cfg.dataDir, args.runId, "result.json")
           if (status.status === "completed" && fs.existsSync(resultPath)) {
             const result = fs.readFileSync(resultPath, "utf8")
-            lines.push(`Result:\n${result.length > 4000 ? result.slice(0, 4000) + "\n... (truncated — full value in result.json)" : result}`)
+            lines.push(
+              `Result:\n${result.length > 4000 ? result.slice(0, 4000) + "\n... (truncated — full value in result.json)" : result}`,
+            )
           }
           return lines.join("\n\n")
         },

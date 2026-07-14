@@ -1,0 +1,11 @@
+{
+  "$comment": "Config for the schedule plugin (~/.config/opencode/plugins/schedule.ts). A project can override any key via <worktree>/.opencode/schedule.json. Restart opencode after editing. triggerModel runs the cheap per-tick check in a persistent session; workModel is spawned fresh when the trigger fires.",
+  "enabled": true,
+  "triggerModel": "openai/gpt-5.6-luna",
+  "workModel": "openai/gpt-5.6-sol",
+  "triggerTimeoutMs": 300000,
+  "workTimeoutMs": 1800000,
+  "maxTicksPerJob": 500,
+  "triggerFailureLimit": 3,
+  "childSessions": "nested"
+}
