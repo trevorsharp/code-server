@@ -1,42 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ARG="${1:-WebApp}"
+REPO_ROOT="$(realpath "${1:?Usage: run-local.sh <repository-root>}")"
 HOST_PORT="${HOST_PORT:-5000}"
+PROJECT_DIR="WebApp"
+CSPROJ="$PROJECT_DIR/WebApp.csproj"
 
-if [[ "$PROJECT_ARG" == *.csproj ]]; then
-  CSPROJ="$PROJECT_ARG"
-  PROJECT_DIR="$(dirname "$CSPROJ")"
-else
-  PROJECT_DIR="$PROJECT_ARG"
-  shopt -s nullglob
-  PROJECT_FILES=("$PROJECT_DIR"/*.csproj)
-  shopt -u nullglob
-
-  if [ "${#PROJECT_FILES[@]}" -eq 0 ]; then
-    echo "ERROR: No .csproj file found in $PROJECT_DIR."
-    echo "Usage: HOST_PORT=5001 $0 [project-directory-or-csproj]"
-    exit 1
-  fi
-
-  if [ "${#PROJECT_FILES[@]}" -gt 1 ]; then
-    echo "ERROR: Multiple .csproj files found in $PROJECT_DIR. Pass the .csproj path explicitly."
-    echo "Usage: HOST_PORT=5001 $0 [project-directory-or-csproj]"
-    exit 1
-  fi
-
-  CSPROJ="${PROJECT_FILES[0]}"
-fi
+cd "$REPO_ROOT"
 
 if [ ! -f "$CSPROJ" ]; then
   echo "ERROR: Project file not found: $CSPROJ"
-  echo "Usage: HOST_PORT=5001 $0 [project-directory-or-csproj]"
+  echo "Repository root: $REPO_ROOT"
   exit 1
 fi
 
 if [ ! -f "$PROJECT_DIR/Properties/launchSettings.json" ]; then
   echo "ERROR: $PROJECT_DIR/Properties/launchSettings.json not found."
-  echo "This script must be run from the root of a .NET service repository."
+  echo "Repository root: $REPO_ROOT"
   exit 1
 fi
 
@@ -47,29 +27,8 @@ if lsof -ti :"$HOST_PORT" > /dev/null 2>&1; then
   exit 1
 fi
 
-# Detect available build configurations from the project file.
-# Services often define custom configs (LOCAL, DEV, TEST, PROD) without Debug/Release.
-# Prefer LOCAL, then DEV, then fall back to the dotnet default (no -c flag).
-CONFIG=""
-if [ -f "$CSPROJ" ]; then
-  CONFIGS_LINE=$(grep -oP '<Configurations>\K[^<]+' "$CSPROJ" 2>/dev/null || true)
-  if [ -n "$CONFIGS_LINE" ]; then
-    if echo "$CONFIGS_LINE" | grep -qw "LOCAL"; then
-      CONFIG="LOCAL"
-    elif echo "$CONFIGS_LINE" | grep -qw "DEV"; then
-      CONFIG="DEV"
-    fi
-  fi
-fi
-
-CONFIG_FLAG=""
-if [ -n "$CONFIG" ]; then
-  CONFIG_FLAG="-c $CONFIG"
-  echo "Using build configuration: $CONFIG"
-fi
-
-echo "Building the service..."
-if ! dotnet build "$CSPROJ" $CONFIG_FLAG; then
+echo "Building the service (Debug)..."
+if ! dotnet build "$CSPROJ" --configuration Debug; then
   echo "ERROR: Build failed. Fix the errors above before running locally."
   exit 1
 fi
@@ -77,7 +36,13 @@ fi
 LOG_FILE="/tmp/dotnet-local-service-$HOST_PORT.log"
 
 echo "Starting the service in the background on port $HOST_PORT..."
-nohup dotnet run --project "$CSPROJ" --no-build $CONFIG_FLAG > "$LOG_FILE" 2>&1 &
+ASPNETCORE_ENVIRONMENT=LOCAL nohup dotnet run \
+  --project "$CSPROJ" \
+  --no-build \
+  --configuration Debug \
+  -- \
+  --urls "http://localhost:$HOST_PORT" \
+  > "$LOG_FILE" 2>&1 &
 SERVICE_PID=$!
 echo "PID: $SERVICE_PID"
 

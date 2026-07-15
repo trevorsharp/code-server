@@ -1,9 +1,11 @@
 ---
 name: get-pr-feedback
-description: Fetch PR review comments from an Azure DevOps or GitHub pull request URL
+description: Fetch PR review comments from an Azure DevOps or GitHub pull request
 ---
 
 # Get PR Feedback
+
+Fetch PR review comments from an Azure DevOps or GitHub pull request URL.
 
 ## Steps
 
@@ -16,10 +18,10 @@ If it prints a URL, use it. If not, ask the user for the PR URL.
 
 ### Run the helper script
 
-Pass the PR URL directly to the bundled `get-pr-feedback.sh` script. It detects the provider from the URL, fetches the feedback, and prints structured markdown.
+Pass the PR URL directly to the bundled [get-pr-feedback.sh](get-pr-feedback.sh) script. It detects the provider from the URL, fetches the feedback, and prints structured markdown.
 
 ```bash
-./get-pr-feedback.sh "<pr-url>"
+get-pr-feedback.sh "<pr-url>"
 ```
 
 If the script fails, report back to the user. If the script runs successfully but produces no `##` sections, then the PR has no review comments.
