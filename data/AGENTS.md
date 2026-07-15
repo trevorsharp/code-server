@@ -10,15 +10,11 @@ Write readable, self-documenting code. Keep comments that are already in the cod
 
 # Variables
 
-When writing lambda functions, use meaningful variable names. (Except for ValidationResult when v => should be used)
+When writing lambda functions, use meaningful variable names, except for ValidationResult when `v =>` should be used.
 
 # Tests
 
 We don't typically have tests for our services (except for repos dedicated to testing like AutomatedTesting), so don't waste any time looking for tests or trying to add/modify them unless something is failing because of tests.
-
-# Slack
-
-The payments dev channel in Slack is `eng-payments-dev` (`C03RB1E7DC1`).
 
 # Custom Git Workflow Scripts
 
