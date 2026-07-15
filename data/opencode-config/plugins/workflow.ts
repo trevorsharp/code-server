@@ -25,7 +25,6 @@ import { tool, type Plugin } from "@opencode-ai/plugin"
 //   maxAgentsPerRun hard cap per run (default 200)
 //   agentTimeoutMs  per-agent timeout (default 15 min)
 //   childSessions   "nested" (default) or "toplevel" sidebar visibility
-//   disableAgents   built-in agent names to disable (e.g. ["general", "plan"])
 //
 // Artifacts per run: ~/.local/share/opencode/workflows/<workflow_YYYYMMDD_HHMMSS>/
 // (script.js, input.json, journal.jsonl, status.json, result.json).
@@ -44,14 +43,12 @@ type WorkflowConfig = {
   agentTimeoutMs: number
   dataDir: string
   childSessions: "nested" | "toplevel"
-  disableAgents: string[]
 }
 
 type AgentOpts = {
   label?: string
   model?: string
   variant?: string
-  agent?: string
   system?: string
   schema?: any
   retries?: number
@@ -117,7 +114,6 @@ const DEFAULT_CONFIG: WorkflowConfig = {
   agentTimeoutMs: 900_000,
   dataDir: path.join(os.homedir(), ".local", "share", "opencode", "workflows"),
   childSessions: "nested",
-  disableAgents: [],
 }
 
 function readJsonIfExists(file: string): any {
@@ -355,7 +351,6 @@ INJECTED PRIMITIVES (these exact names are in scope; nothing else is):
     label: short display label used in child session titles and the journal
     model: REQUIRED — model slug from the MODELS list below; every agent must explicitly declare its model (calls without opts.model throw)
     variant: reasoning effort for this agent (e.g. "low", "high", "xhigh") — must be one of the chosen model's [variants] listed below; omit for the model's default
-    agent: a named opencode agent (e.g. "plan") to run the child as; omit for default
     system: extra system prompt text for the child
     schema: JSON Schema the reply must satisfy. The child is instructed to reply with only matching JSON; the reply is parsed and validated, and on mismatch the child is asked to correct itself up to \`retries\` times before the call throws. Supported keywords: type, properties, required, items, enum, const.
     retries: schema-correction attempts (default 2)
@@ -659,9 +654,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
                 parts: [{ type: "text", text }],
                 ...(model ? { model } : {}),
                 ...(opts.variant ? { variant: opts.variant } : {}),
-                ...(opts.agent ? { agent: opts.agent } : {}),
                 ...(opts.system ? { system: opts.system } : {}),
                 tools: {
+                  task: false,
                   workflow_run: false,
                   workflow_status: false,
                   workflow_cancel: false,
@@ -949,18 +944,23 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       if (!run || run.status !== "running" || run.cancelled) return
       cancelRun(run, "ui cancel button")
     },
-    // Disable built-in subagents listed in workflow.json (disableAgents) so
-    // workflows are the only fan-out mechanism — no need to also maintain
-    // agent.disable blocks in opencode.json.
     config: async (opencodeConfig: any) => {
-      if (cfg.disableAgents.length === 0) return
-      opencodeConfig.agent = opencodeConfig.agent ?? {}
-      for (const name of cfg.disableAgents) {
-        opencodeConfig.agent[name] = {
-          ...opencodeConfig.agent[name],
-          disable: true,
-        }
+      opencodeConfig.tools = {
+        ...opencodeConfig.tools,
+        task: false,
       }
+    },
+    "experimental.chat.system.transform": async (
+      input: { sessionID?: string },
+      output: { system: string[] },
+    ) => {
+      const isWorkflowChild = [...liveRuns.values()].some(
+        (run) => input.sessionID && run.activeSessions.has(input.sessionID),
+      )
+      if (isWorkflowChild) return
+      output.system.push(
+        "When subagents would help, create them with workflow_run for delegation or parallel work.",
+      )
     },
     // Variants load in the background after startup; rebuild the description
     // each time it is sent to the LLM so it reflects the current state.

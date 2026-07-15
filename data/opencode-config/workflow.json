@@ -20,12 +20,6 @@
     }
   ],
   "childSessions": "nested",
-  "disableAgents": [
-    "general",
-    "plan",
-    "scout",
-    "explore"
-  ],
   "maxConcurrency": 5,
   "maxAgentsPerRun": 100,
   "agentTimeoutMs": 1800000
