@@ -3,8 +3,8 @@
 # get-pr-feedback.sh
 # Fetches and formats PR feedback from Azure DevOps or GitHub.
 #
-# Azure DevOps usage: ./get-pr-feedback.sh <org-base-url> <pr-id>
-#   Example: ./get-pr-feedback.sh "https://carvanadev.visualstudio.com" 12345
+# Azure DevOps usage: ./get-pr-feedback.sh <azure-devops-pr-url>
+#   Example: ./get-pr-feedback.sh "https://carvanadev.visualstudio.com/.../_git/Repo/pullrequest/12345"
 #
 # GitHub usage:       ./get-pr-feedback.sh <github-pr-url>
 #   Example: ./get-pr-feedback.sh "https://github.com/owner/repo/pull/42"
