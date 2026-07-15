@@ -21,6 +21,7 @@ type Job = {
   creatorSessionID: string;
   status: "running" | "expired" | "cancelled";
   triggerSessionID?: string;
+  finishedAt?: string;
   terminalReason?: string;
 };
 
@@ -214,7 +215,7 @@ function nextOccurrence(spec: CronSpec, after: Date): Date | null {
 }
 
 function parseVerdict(text: string): {
-  triggered: boolean;
+  shouldEscalate: boolean;
   reason: string;
   context: string;
 } | null {
@@ -230,9 +231,9 @@ function parseVerdict(text: string): {
   for (const candidate of candidates) {
     try {
       const value = JSON.parse(candidate.trim());
-      if (typeof value.triggered === "boolean") {
+      if (typeof value.shouldEscalate === "boolean") {
         return {
-          triggered: value.triggered,
+          shouldEscalate: value.shouldEscalate,
           reason: String(value.reason ?? ""),
           context: String(value.context ?? ""),
         };
@@ -358,7 +359,7 @@ export const SchedulePlugin: Plugin = async ({
             tools: {
               schedule_create: false,
               schedule_list: false,
-              schedule_logs: false,
+              schedule_status: false,
               schedule_cancel: allowCancel,
             },
           },
@@ -374,7 +375,7 @@ export const SchedulePlugin: Plugin = async ({
   }
 
   async function trigger(live: LiveJob): Promise<{
-    triggered: boolean;
+    shouldEscalate: boolean;
     reason: string;
     context: string;
   }> {
@@ -406,10 +407,8 @@ export const SchedulePlugin: Plugin = async ({
     const sessionID = job.triggerSessionID;
     live.sessions.add(sessionID);
     const rules =
-      'Keep memory only in this conversation; never write state files. Run only the trigger check. Return only {"triggered":boolean,"reason":"one sentence","context":"details for the work agent"}.';
-    let message = isNew
-      ? `${rules}\n\nWork from ${job.directory}.\n\n${job.triggerPrompt}`
-      : `${rules}\n\nRun the check again. Report only new or materially changed conditions unless instructed otherwise.`;
+      'You are running as part of a scheduled job. Your task has been defined below or in a previous message. You should not track context in files (unless explicitly asked). Run or re-run any required checks and reply with only {"shouldEscalate":boolean,"reason":"One sentence of why or why not to escalate","context":"Context relevant to the escalation or empty string if not escalating"}.';
+    let message = isNew ? `${rules}\n\n${job.triggerPrompt}` : rules;
 
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -422,7 +421,7 @@ export const SchedulePlugin: Plugin = async ({
         );
         const verdict = parseVerdict(response);
         if (verdict) return verdict;
-        message = `Return only {"triggered":boolean,"reason":"one sentence","context":"details for the work agent"}.`;
+        message = `Reply only with {"shouldEscalate":boolean,"reason":"One sentence of why or why not to escalate","context":"Context relevant to the escalation or empty string if not escalating"}.`;
       }
       throw new Error("trigger returned an invalid verdict twice");
     } finally {
@@ -441,7 +440,7 @@ export const SchedulePlugin: Plugin = async ({
       await prompt(
         job,
         sessionID,
-        `Perform this work once. Do not create a schedule. If the job's end condition is met, call schedule_cancel with jobId "${job.id}".\n\nTrigger: ${verdict.reason}\n${verdict.context}\n\n${job.workPrompt}`,
+        `You are running as part of a scheduled job. Another agent has decided to escalate to you to perform a one-off task described below. You should not track context in files (unless explicitly asked). Run any required checks and re-validate any conclusions provided as context below. Do not ask the user questions as this is running in a background session. If you determine the job's end condition has been met, call \`schedule_cancel\` with jobId \`${job.id}\`.\n\nEscalation reason: "${verdict.reason}"\nContext: "${verdict.context}"\n\nYour task:\n${job.workPrompt}`,
         config.workModel,
         WORK_TIMEOUT_MS,
         true,
@@ -456,6 +455,7 @@ export const SchedulePlugin: Plugin = async ({
     if (live?.timer) clearTimeout(live.timer);
     if (live) live.timer = null;
     job.status = status;
+    job.finishedAt = new Date().toISOString();
     job.terminalReason = reason;
     save(job);
     liveJobs.delete(job.id);
@@ -493,7 +493,7 @@ export const SchedulePlugin: Plugin = async ({
 
     try {
       const verdict = await trigger(live);
-      if (verdict.triggered && job.status === "running") {
+      if (verdict.shouldEscalate && job.status === "running") {
         await runWork(live, verdict);
       }
     } catch (error) {
@@ -530,10 +530,13 @@ export const SchedulePlugin: Plugin = async ({
     if (job.status === "running" && !liveJobs.has(job.id)) start(job);
   }
 
-  const createDescription = `Create a job with a persistent trigger session and a fresh work session per trigger. Work sessions can cancel the job. Prompts must be self-contained. Trigger memory stays in conversation, never files. Jobs restart from ${config.dataDir}. cron has five fields; expiresAt is required; missed ticks are skipped.`;
+  const createDescription =
+    "Create a scheduled job to perform ongoing or repetitive tasks or monitoring.";
 
   function describe(job: Job): string {
-    const reason = job.terminalReason ? ` reason=${job.terminalReason}` : "";
+    const reason = job.terminalReason
+      ? ` terminalReason=${job.terminalReason}`
+      : "";
     const triggerSession = job.triggerSessionID
       ? ` triggerSession=${job.triggerSessionID}`
       : "";
@@ -545,17 +548,25 @@ export const SchedulePlugin: Plugin = async ({
       schedule_create: tool({
         description: createDescription,
         args: {
-          name: tool.schema.string().describe("Short job name."),
+          name: tool.schema
+            .string()
+            .describe("Short name for the scheduled job in sentence case."),
           cron: tool.schema.string().describe("Five-field cron expression."),
           expiresAt: tool.schema
             .string()
-            .describe("ISO date-time after which the job stops."),
+            .describe(
+              "ISO date-time after which the scheduled job stops running.",
+            ),
           triggerPrompt: tool.schema
             .string()
-            .describe("Self-contained read-only check and trigger condition."),
+            .describe(
+              "Prompt for the trigger agent that runs on every cron occurrence. It performs quick checks and determines whether the work agent should run. Its context persists across intervals.",
+            ),
           workPrompt: tool.schema
             .string()
-            .describe("Self-contained follow-up performed when triggered."),
+            .describe(
+              "Prompt for the work agent that runs when the trigger agent escalates to it. It performs deeper analysis or investigation and may take action. It receives a fresh context each time.",
+            ),
         },
         async execute(args, context) {
           let spec: CronSpec;
@@ -571,7 +582,7 @@ export const SchedulePlugin: Plugin = async ({
           }
           const first = nextOccurrence(spec, new Date());
           if (!first || first > expiresAt) {
-            return "The cron has no occurrence before expiresAt.";
+            return "The cron never fires before the expiresAt date-time.";
           }
 
           const job: Job = {
@@ -593,32 +604,44 @@ export const SchedulePlugin: Plugin = async ({
           }
           save(job);
           start(job);
-          return `Created ${job.id}. First run: ${first.toISOString()}. State: ${fileFor(job.id)}`;
+          const firstRun = new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "long",
+          }).format(first);
+          return `Created scheduled job with id: ${job.id}. The first run will be at ${firstRun}.`;
         },
       }),
 
       schedule_list: tool({
-        description: "List scheduled jobs.",
+        description:
+          "List all running scheduled jobs and any jobs that expired or were cancelled within the past 24 hours.",
         args: {},
         async execute() {
-          const jobs = loadJobs().sort((left, right) =>
-            left.name.localeCompare(right.name),
-          );
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          const jobs = loadJobs()
+            .filter(
+              (job) =>
+                job.status === "running" ||
+                (job.finishedAt !== undefined &&
+                  new Date(job.finishedAt).getTime() >= cutoff),
+            )
+            .sort((left, right) => left.name.localeCompare(right.name));
           return jobs.length
-            ? jobs.slice(0, 25).map(describe).join("\n")
+            ? jobs.map(describe).join("\n")
             : "No scheduled jobs.";
         },
       }),
 
-      schedule_logs: tool({
+      schedule_status: tool({
         description:
-          "Show a scheduled job's current status and trigger session.",
+          "Show a scheduled job's status, schedule, expiration, trigger session, and terminal reason.",
         args: {
           jobId: tool.schema.string(),
         },
         async execute(args) {
           const job = loadJobs().find((candidate) => candidate.id === args.jobId);
-          if (!job) return `No job ${args.jobId}.`;
+          if (!job)
+            return `No scheduled job found for id: ${args.jobId}.`;
           return describe(job);
         },
       }),
@@ -630,7 +653,8 @@ export const SchedulePlugin: Plugin = async ({
           const job =
             liveJobs.get(args.jobId)?.job ??
             loadJobs().find((candidate) => candidate.id === args.jobId);
-          if (!job) return `No job ${args.jobId}.`;
+          if (!job)
+            return `No scheduled job found for id: ${args.jobId}.`;
           if (job.status !== "running")
             return `${args.jobId} is ${job.status}.`;
           cancel(job, context.sessionID);
