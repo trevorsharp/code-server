@@ -23,6 +23,15 @@ type Job = {
   triggerSessionID?: string;
   finishedAt?: string;
   terminalReason?: string;
+  card?: { messageID: string; partID: string };
+  nextFireAt?: string;
+  workRunCount?: number;
+  workSessions?: Array<{
+    sessionID: string;
+    label: string;
+    model: string;
+    status: "running" | "completed" | "error";
+  }>;
 };
 
 type LiveJob = {
@@ -30,6 +39,7 @@ type LiveJob = {
   timer: ReturnType<typeof setTimeout> | null;
   running: boolean;
   sessions: Set<string>;
+  cardQueue: Promise<void>;
 };
 
 type CronSpec = {
@@ -290,6 +300,7 @@ export const SchedulePlugin: Plugin = async ({
   client,
   worktree,
   directory,
+  serverUrl,
 }) => {
   const config = loadConfig(worktree || directory);
   if (!config.enabled) return {};
@@ -318,6 +329,106 @@ export const SchedulePlugin: Plugin = async ({
     } catch {
       return [];
     }
+  }
+
+  let cardsSupported: boolean | null = null;
+
+  function cardBody(live: LiveJob) {
+    const job = live.job;
+    const triggerRunning =
+      live.running &&
+      Boolean(job.triggerSessionID && live.sessions.has(job.triggerSessionID));
+    const triggerAgents = job.triggerSessionID
+      ? [
+          {
+            sessionID: job.triggerSessionID,
+            label: "Trigger",
+            model: config.triggerModel,
+            status: triggerRunning ? "running" : "completed",
+          },
+        ]
+      : [];
+    const workSessions = job.workSessions ?? [];
+    return {
+      tool: "schedule",
+      description: job.name,
+      agent: "schedule",
+      prompt: job.name,
+      status: job.status === "running" ? "running" : "completed",
+      metadata: {
+        uiOnly: true,
+        schedule: {
+          jobId: job.id,
+          name: job.name,
+          expiresAt: job.expiresAt,
+          nextFireAt: job.nextFireAt,
+          steps: [
+            {
+              title: "Trigger",
+              status: triggerRunning
+                ? "running"
+                : triggerAgents.length
+                  ? "completed"
+                  : "pending",
+              agents: triggerAgents,
+            },
+            {
+              title: "Work",
+              status: workSessions.some((row) => row.status === "running")
+                ? "running"
+                : workSessions.length
+                  ? "completed"
+                  : "pending",
+              agents: workSessions,
+            },
+          ],
+        },
+      },
+      ...(job.card ?? {}),
+    };
+  }
+
+  async function updateCard(live: LiveJob): Promise<void> {
+    if (cardsSupported === false) return;
+    try {
+      const url = new URL(
+        `/session/${live.job.creatorSessionID}/agent-card`,
+        serverUrl,
+      );
+      url.searchParams.set("directory", live.job.directory);
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      };
+      if (process.env.OPENCODE_SERVER_PASSWORD) {
+        headers.authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`;
+      }
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(cardBody(live)),
+      });
+      if (response.status === 404 || response.status === 405) {
+        cardsSupported = false;
+        return;
+      }
+      if (!response.ok) {
+        console.error(
+          `[schedule] card update failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
+        );
+        return;
+      }
+      cardsSupported = true;
+      const card = (await response.json()) as Job["card"];
+      if (!card?.messageID || !card.partID) return;
+      live.job.card = card;
+      save(live.job);
+    } catch (error) {
+      console.error(`[schedule] card update failed: ${error}`);
+    }
+  }
+
+  function pushCard(live: LiveJob): void {
+    live.cardQueue = live.cardQueue.then(() => updateCard(live));
   }
 
   async function createSession(job: Job, title: string): Promise<string> {
@@ -397,15 +508,21 @@ export const SchedulePlugin: Plugin = async ({
     }
 
     if (!job.triggerSessionID) {
-      job.triggerSessionID = await createSession(
+      const sessionID = await createSession(
         job,
         `Schedule "${job.name}" trigger`,
       );
+      if (job.status !== "running") {
+        await client.session.abort({ path: { id: sessionID } }).catch(() => {});
+        throw new Error(`job is ${job.status}`);
+      }
+      job.triggerSessionID = sessionID;
       save(job);
     }
 
     const sessionID = job.triggerSessionID;
     live.sessions.add(sessionID);
+    pushCard(live);
     const rules =
       'You are running as part of a scheduled job. Your task has been defined below or in a previous message. You should not track context in files (unless explicitly asked). Run or re-run any required checks and reply with only {"shouldEscalate":boolean,"reason":"One sentence of why or why not to escalate","context":"Context relevant to the escalation or empty string if not escalating"}.';
     let message = isNew ? `${rules}\n\n${job.triggerPrompt}` : rules;
@@ -426,6 +543,7 @@ export const SchedulePlugin: Plugin = async ({
       throw new Error("trigger returned an invalid verdict twice");
     } finally {
       live.sessions.delete(sessionID);
+      pushCard(live);
     }
   }
 
@@ -435,7 +553,21 @@ export const SchedulePlugin: Plugin = async ({
   ): Promise<void> {
     const job = live.job;
     const sessionID = await createSession(job, `Schedule "${job.name}" work`);
+    if (job.status !== "running") {
+      await client.session.abort({ path: { id: sessionID } }).catch(() => {});
+      return;
+    }
+    job.workRunCount = (job.workRunCount ?? 0) + 1;
+    const row = {
+      sessionID,
+      label: `Work run ${job.workRunCount}`,
+      model: config.workModel,
+      status: "running" as "running" | "completed" | "error",
+    };
+    job.workSessions = [...(job.workSessions ?? []), row].slice(-5);
     live.sessions.add(sessionID);
+    save(job);
+    pushCard(live);
     try {
       await prompt(
         job,
@@ -445,8 +577,14 @@ export const SchedulePlugin: Plugin = async ({
         WORK_TIMEOUT_MS,
         true,
       );
+      row.status = "completed";
+    } catch (error) {
+      row.status = "error";
+      throw error;
     } finally {
       live.sessions.delete(sessionID);
+      save(job);
+      pushCard(live);
     }
   }
 
@@ -457,7 +595,9 @@ export const SchedulePlugin: Plugin = async ({
     job.status = status;
     job.finishedAt = new Date().toISOString();
     job.terminalReason = reason;
+    delete job.nextFireAt;
     save(job);
+    if (live) pushCard(live);
     liveJobs.delete(job.id);
   }
 
@@ -479,6 +619,9 @@ export const SchedulePlugin: Plugin = async ({
     }
 
     const delay = next.getTime() - Date.now();
+    job.nextFireAt = next.toISOString();
+    save(job);
+    pushCard(live);
     if (delay > MAX_TIMER_MS) {
       live.timer = setTimeout(() => arm(live), MAX_TIMER_MS);
       return;
@@ -510,6 +653,7 @@ export const SchedulePlugin: Plugin = async ({
       timer: null,
       running: false,
       sessions: new Set(),
+      cardQueue: Promise.resolve(),
     };
     liveJobs.set(job.id, live);
     arm(live);
@@ -520,7 +664,9 @@ export const SchedulePlugin: Plugin = async ({
     if (live) {
       for (const sessionID of live.sessions) {
         if (sessionID === requestingSessionID) continue;
-        void (client.session.abort({ path: { id: sessionID } }) as Promise<any>);
+        void (client.session.abort({
+          path: { id: sessionID },
+        }) as Promise<any>);
       }
     }
     finish(job, "cancelled", "cancelled by request");
@@ -544,6 +690,14 @@ export const SchedulePlugin: Plugin = async ({
   }
 
   return {
+    event: async ({ event }: { event: any }) => {
+      if (event?.type !== "message.part.updated") return;
+      const schedule = event.properties?.part?.state?.metadata?.schedule;
+      if (!schedule?.cancelRequested || !schedule.jobId) return;
+      const job = liveJobs.get(schedule.jobId)?.job;
+      if (!job || job.status !== "running") return;
+      cancel(job);
+    },
     tool: {
       schedule_create: tool({
         description: createDescription,
@@ -639,9 +793,10 @@ export const SchedulePlugin: Plugin = async ({
           jobId: tool.schema.string(),
         },
         async execute(args) {
-          const job = loadJobs().find((candidate) => candidate.id === args.jobId);
-          if (!job)
-            return `No scheduled job found for id: ${args.jobId}.`;
+          const job = loadJobs().find(
+            (candidate) => candidate.id === args.jobId,
+          );
+          if (!job) return `No scheduled job found for id: ${args.jobId}.`;
           return describe(job);
         },
       }),
@@ -653,8 +808,7 @@ export const SchedulePlugin: Plugin = async ({
           const job =
             liveJobs.get(args.jobId)?.job ??
             loadJobs().find((candidate) => candidate.id === args.jobId);
-          if (!job)
-            return `No scheduled job found for id: ${args.jobId}.`;
+          if (!job) return `No scheduled job found for id: ${args.jobId}.`;
           if (job.status !== "running")
             return `${args.jobId} is ${job.status}.`;
           cancel(job, context.sessionID);
