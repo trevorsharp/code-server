@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+env | grep -v -E '^(HOME|PWD|SHLVL|USER|LOGNAME|PATH|TERM|_)=' > /etc/environment
+
 OPENCODE_CMD="opencode"
 
 if [ "${OPENCODE_FORK:-0}" = "1" ]; then
@@ -9,7 +11,7 @@ if [ "${OPENCODE_FORK:-0}" = "1" ]; then
 fi
 
 echo "Starting OpenCode web server (using ${OPENCODE_CMD})..."
-su -l --whitelist-environment=NOTIFY_SLACK_WEBHOOK_URL "${USERNAME}" -c "OPENCODE_DISABLE_CHANNEL_DB=1 ${OPENCODE_CMD} web > /dev/null 2>&1 &"
+su -l "${USERNAME}" -c "set -a; . /etc/environment; OPENCODE_DISABLE_CHANNEL_DB=1 ${OPENCODE_CMD} web > /dev/null 2>&1 &"
 
 if [ -d /home/${USERNAME}/.ssh ]; then
     chmod 700 /home/${USERNAME}/.ssh 2>/dev/null || true
