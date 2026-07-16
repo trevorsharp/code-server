@@ -945,9 +945,16 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       cancelRun(run, "ui cancel button")
     },
     config: async (opencodeConfig: any) => {
-      opencodeConfig.tools = {
-        ...opencodeConfig.tools,
-        task: false,
+      const denyTask = (permission: any) => {
+        if (typeof permission === "string") return { "*": permission, task: "deny" }
+        const { task: _task, ...rest } = permission ?? {}
+        return { ...rest, task: "deny" }
+      }
+
+      opencodeConfig.permission = denyTask(opencodeConfig.permission)
+
+      for (const agent of Object.values(opencodeConfig.agent ?? {}) as any[]) {
+        agent.permission = denyTask(agent.permission)
       }
     },
     "experimental.chat.system.transform": async (
@@ -959,8 +966,13 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       )
       if (isWorkflowChild) return
       output.system.push(
-        "When subagents would help, create them with workflow_run for delegation or parallel work.",
+        "There is no task/subagent tool. Whenever delegation or parallel work would help — including one-off explorations or single background tasks — use workflow_run, even for a single agent.",
       )
+    },
+    "tool.execute.before": async (input: { tool: string }) => {
+      if (input.tool === "task") {
+        throw new Error("The task/subagent tool is disabled. Use workflow_run instead.")
+      }
     },
     // Variants load in the background after startup; rebuild the description
     // each time it is sent to the LLM so it reflects the current state.

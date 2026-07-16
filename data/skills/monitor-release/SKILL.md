@@ -41,7 +41,7 @@ Treat the production release as successful only when its state is `completed` an
 
 ### Telemetry discovery
 
-Splunk and Datadog will be required for this release monitor. If either MCP is missing, ask the user to enable them before proceeding.
+Splunk and Datadog will be required for this release monitor. If either MCP is missing, ask the user to enable them before proceeding. Run just the necessary queries to derive the following data. Don't do any additional analysis at this point (that will be handled in the scheduled job).
 
 Derive the candidate Splunk source by removing the `carvana-oec-` prefix from the service name from the build. Verify it with a small Splunk query over the last 15 minutes:
 
@@ -79,7 +79,7 @@ Production deployment completed at: {production-deployment-time}
 
 {Pending release block
   
-Before starting to query release telemetry, run the following command to check the release status. If the production deployment is not completed, do not query telemetry or escalate. If it completes with a result other than `succeeded`, immediately trigger an investigation for rollout failure. Once it succeeds, retain its `finishTime`, stop running the status command, and start the telemetry queries.
+Before starting to query release telemetry, run the following command to check the release status. If the production deployment is not completed, do not query telemetry or escalate. If it completes with a result other than `succeeded`, immediately trigger an investigation for rollout failure. After you see that it succeeds one time, you no longer need to continue checking its status and can start the telemetry queries.
 
 ```bash
 az rest --method get \
@@ -130,7 +130,6 @@ On all runs after production deployment:
 - Query the latest completed 5-minute window for the new version ({version}), allowing for telemetry ingestion delay.
 - Run the equivalent Splunk request-outcome and warning/error-pattern queries for the current window.
 - Run the Datadog version-traffic query, the p95 query scoped to {version}, and the complete HTTP status breakdown scoped to {version}.
-- Allow a 15-minute deployment grace period. Afterward, escalate if the target receives fewer than 10 requests in a completed 5-minute window, or if old-version traffic remains above 10% of total traffic for two consecutive windows.
 - Derive the target's 5xx rate from the status breakdown only when its sum matches target request hits. A missing or incomplete series is unknown, not zero.
 - Treat the 5xx rate as materially increased only when there are at least 5 target-version 5xx responses and the rate is at least 1 percentage point and twice the baseline rate.
 - Compare rates rather than raw counts when the baseline and current windows differ in duration. Treat a warning or error pattern as materially worse only when it has at least 5 occurrences and at least twice the baseline rate per request.

@@ -30,6 +30,9 @@
   "permission": {
     "*": "allow"
   },
+  "tools": {
+    "task": false
+  },
   "mcp": {
     "Jira": {
       "type": "remote",
