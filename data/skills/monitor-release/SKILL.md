@@ -156,7 +156,7 @@ Safety:
 - Never mutate production, approve or reject anything, redeploy, restart services, change configuration, or perform a rollback.
 - Recommend actions only.
 - Do not ask the user questions. Complete the investigation from available evidence.
-- Notify only Trevor through the `notify` skill.
+- Notify only Trevor through the `notify` tool.
 - Do not create another scheduled job.
 - Keep your investigation focused yet thorough. If high-confidence evidence is found early, limit the remaining investigation to evidence needed to refute or scope it before notifying.
 

@@ -11,6 +11,7 @@ services:
     hostname: work-code-server
     environment:
       - OPENCODE_FORK=1
+      - NOTIFY_SLACK_WEBHOOK_URL=${NOTIFY_SLACK_WEBHOOK_URL}
     ports:
       # SSH
       - "2222:22"
