@@ -82,12 +82,6 @@ RUN curl -fsSL https://static.fastly.carvanatech.com/workspace-cli/install.sh | 
 # Install CSharpier globally
 RUN dotnet tool install csharpier --global --version 1.1.1
 
-# Install Codex
-RUN curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh
-
-# Install Claude Code
-RUN curl -fsSL https://claude.ai/install.sh | bash
-
 # Install Chromium for headless browser Chrome DevTools MCP
 RUN . ${NVM_DIR}/nvm.sh \
     && npx -y playwright@1.61.1 install --with-deps chromium
