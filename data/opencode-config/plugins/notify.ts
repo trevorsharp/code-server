@@ -1,6 +1,6 @@
 import { tool, type Plugin } from "@opencode-ai/plugin"
 
-export const NotifyPlugin: Plugin = async ({ project }) => ({
+export const NotifyPlugin: Plugin = async () => ({
   tool: {
     notify: tool({
       description:
@@ -22,7 +22,7 @@ export const NotifyPlugin: Plugin = async ({ project }) => ({
           body: JSON.stringify({
             message,
             sessionId: context.sessionID,
-            projectId: project.id,
+            projectId: Buffer.from(context.directory).toString("base64url"),
           }),
         })
 
