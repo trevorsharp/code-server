@@ -88,7 +88,7 @@ RUN curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh
 # Install Claude Code
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
-# Install Playwright Chromium for headless browser MCP
+# Install Chromium for headless browser Chrome DevTools MCP
 RUN . ${NVM_DIR}/nvm.sh \
     && npx -y playwright@1.61.1 install --with-deps chromium
 

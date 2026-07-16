@@ -75,7 +75,7 @@
       "type": "local",
       "command": [
         "bun",
-        "/home/sharp/.config/opencode/mcp/chrome-devtools-container.ts"
+        "/home/sharp/.config/opencode/mcp/chrome-devtools.ts"
       ],
       "env": {
         "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1"

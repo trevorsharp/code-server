@@ -4,6 +4,37 @@ import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+const proxyPort = Number(process.env.CHROME_DEVTOOLS_PROXY_PORT || 9222);
+const proxyUrl = `http://127.0.0.1:${proxyPort}`;
+const proxyScript = join(
+  homedir(),
+  ".config/opencode/mcp/chrome-devtools-proxy/server.ts",
+);
+
+const ensureProxy = async () => {
+  try {
+    const response = await fetch(`${proxyUrl}/healthz`);
+    if (response.ok) return;
+  } catch {}
+
+  Bun.spawn(["bun", proxyScript], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    env: process.env,
+  }).unref();
+
+  for (let attempt = 0; attempt < 50; attempt++) {
+    await Bun.sleep(50);
+    try {
+      const response = await fetch(`${proxyUrl}/healthz`);
+      if (response.ok) return;
+    } catch {}
+  }
+
+  throw new Error(`Chrome DevTools proxy did not start on port ${proxyPort}`);
+};
+
 const pickFreePort = (): number => {
   const listener = Bun.listen({
     hostname: "127.0.0.1",
@@ -17,7 +48,35 @@ const pickFreePort = (): number => {
 
 const debugPort = pickFreePort();
 
-const browserContext = `The browser runs headless inside this code server's container. It has access to workspace files (file:// works) and all localhost ports. Each opencode session gets a fresh isolated browser profile. This session's browser exposes CDP debugging on localhost:${debugPort} — the first time you use a browser tool in a session, tell the user this port so they can monitor the browser from their host machine (SSH tunnel + chrome://inspect).`;
+await ensureProxy();
+
+const instanceId = crypto.randomUUID().slice(0, 8);
+const instanceUrl = `${proxyUrl}/api/instances/${instanceId}`;
+const registration = {
+  id: instanceId,
+  port: debugPort,
+  pid: process.pid,
+  startedAt: new Date().toISOString(),
+};
+
+const register = async () => {
+  const response = await fetch(`${proxyUrl}/api/instances`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(registration),
+  });
+  if (!response.ok) throw new Error(`Proxy registration failed: ${response.status}`);
+};
+
+const unregister = async () => {
+  try {
+    await fetch(instanceUrl, { method: "DELETE" });
+  } catch {}
+};
+
+await register();
+
+const browserContext = `The browser runs headless inside this code server's container. It has access to workspace files (file:// works) and all localhost ports. Each opencode session gets a fresh isolated browser profile. This session is ${instanceId} in the Chrome DevTools dashboard on port ${proxyPort}. The first time you use a browser tool in a session, tell the user they can monitor it from that dashboard.`;
 
 const installCommand = "npx playwright install chromium";
 
@@ -120,7 +179,21 @@ const child = Bun.spawn(
   },
 );
 
+let stopping = false;
+const stop = async (signal: NodeJS.Signals) => {
+  if (stopping) return;
+  stopping = true;
+  child.kill(signal);
+  await child.exited;
+  await unregister();
+  process.exit(0);
+};
+
+process.on("SIGINT", () => void stop("SIGINT"));
+process.on("SIGTERM", () => void stop("SIGTERM"));
+
 const stdoutDone = rewriteToolDescriptions(child.stdout);
 const exitCode = await child.exited;
 await stdoutDone;
+await unregister();
 process.exit(exitCode);

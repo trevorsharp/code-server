@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chrome DevTools Sessions</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        background: #0b0d10;
+        color: #e8ebef;
+      }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; }
+      main { width: min(1100px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0; }
+      header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+      h1 { margin: 0; font-size: clamp(28px, 5vw, 48px); letter-spacing: -0.04em; }
+      .subtitle { margin: 8px 0 0; color: #9299a3; }
+      .summary { color: #9299a3; white-space: nowrap; }
+      #instances { display: grid; gap: 16px; }
+      .instance { overflow: hidden; border: 1px solid #262b33; border-radius: 14px; background: #12161b; }
+      .instance-header { display: flex; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid #262b33; }
+      .identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #f0a33a; box-shadow: 0 0 14px #f0a33a66; }
+      .online .dot { background: #48d597; box-shadow: 0 0 14px #48d59766; }
+      .instance-name { overflow: hidden; font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; }
+      .meta { color: #7e8792; font-size: 12px; }
+      .targets { display: grid; }
+      .target { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 16px 20px; }
+      .target + .target { border-top: 1px solid #20252c; }
+      .target-title { overflow: hidden; margin-bottom: 5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+      .target-url { overflow: hidden; color: #7e8792; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+      .inspect { border: 1px solid #3b4653; border-radius: 8px; padding: 8px 12px; color: #dfe6ee; font-size: 13px; text-decoration: none; }
+      .inspect:hover { border-color: #78a9ff; color: #9fc0ff; }
+      .empty { padding: 72px 24px; border: 1px dashed #303640; border-radius: 14px; color: #7e8792; text-align: center; }
+      .waiting { padding: 18px 20px; color: #9299a3; font-size: 13px; }
+      @media (max-width: 640px) {
+        main { width: min(100% - 24px, 1100px); padding: 28px 0; }
+        header { align-items: start; flex-direction: column; gap: 8px; }
+        .instance-header { align-items: start; flex-direction: column; }
+        .target { grid-template-columns: 1fr; }
+        .inspect { justify-self: start; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Chrome DevTools sessions</h1>
+        </div>
+        <div class="summary" id="summary">Connecting...</div>
+      </header>
+      <section id="instances"><div class="empty">Loading active sessions...</div></section>
+    </main>
+    <script>
+      const instancesElement = document.querySelector("#instances");
+      const summaryElement = document.querySelector("#summary");
+
+      const decodeEntities = (value) => {
+        const textarea = document.createElement("textarea");
+        textarea.innerHTML = value;
+        return textarea.value;
+      };
+
+      const formatAge = (startedAt) => {
+        const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(startedAt)) / 1000));
+        if (seconds < 60) return `${seconds}s`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+        return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+      };
+
+      const appendText = (parent, className, text) => {
+        const element = document.createElement("div");
+        element.className = className;
+        element.textContent = text;
+        parent.append(element);
+        return element;
+      };
+
+      const render = (instances) => {
+        instancesElement.replaceChildren();
+        summaryElement.textContent = `${instances.length} active ${instances.length === 1 ? "session" : "sessions"}`;
+
+        if (instances.length === 0) {
+          appendText(instancesElement, "empty", "No Chrome DevTools MCP sessions are active.");
+          return;
+        }
+
+        for (const instance of instances) {
+          const card = document.createElement("article");
+          card.className = `instance ${instance.online ? "online" : ""}`;
+
+          const header = document.createElement("div");
+          header.className = "instance-header";
+          const identity = document.createElement("div");
+          identity.className = "identity";
+          const dot = document.createElement("span");
+          dot.className = "dot";
+          identity.append(dot);
+          appendText(identity, "instance-name", instance.id);
+          header.append(identity);
+          appendText(header, "meta", `PID ${instance.pid} | CDP ${instance.port} | ${formatAge(instance.startedAt)}`);
+          card.append(header);
+
+          if (!instance.online) {
+            appendText(card, "waiting", "Waiting for Chromium to expose its debugging endpoint...");
+          } else if (instance.targets.length === 0) {
+            appendText(card, "waiting", "Chromium is online with no inspectable page targets.");
+          } else {
+            const targets = document.createElement("div");
+            targets.className = "targets";
+            for (const target of instance.targets) {
+              const row = document.createElement("div");
+              row.className = "target";
+              const details = document.createElement("div");
+              details.style.minWidth = "0";
+              appendText(
+                details,
+                "target-title",
+                decodeEntities(target.title || target.type || "Untitled target"),
+              );
+              appendText(details, "target-url", target.url || target.id);
+              row.append(details);
+              if (target.inspectUrl) {
+                const inspect = document.createElement("a");
+                inspect.className = "inspect";
+                inspect.href = target.inspectUrl;
+                inspect.target = "_blank";
+                inspect.rel = "noreferrer";
+                inspect.textContent = "Inspect";
+                row.append(inspect);
+              }
+              targets.append(row);
+            }
+            card.append(targets);
+          }
+
+          instancesElement.append(card);
+        }
+      };
+
+      const refresh = async () => {
+        try {
+          const response = await fetch("/api/instances", { cache: "no-store" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          render(await response.json());
+        } catch {
+          summaryElement.textContent = "Disconnected";
+        }
+      };
+
+      refresh();
+      setInterval(refresh, 2000);
+    </script>
+  </body>
+</html>
