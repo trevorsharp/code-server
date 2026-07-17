@@ -8,7 +8,7 @@ import { tool, type Plugin } from "@opencode-ai/plugin"
 //
 // The workflow_run tool accepts a model-authored JavaScript script (the body
 // of an async function) with injected primitives (agent/parallel/pipeline/
-// log/sleep/step). The script runs in the background inside the server
+// log/sleep/phase). The script runs in the background inside the server
 // process; each agent() call becomes a child session driven via the SDK
 // client. On completion the originating session is woken with
 // session.promptAsync (a synthetic part — the fork UI hides the bubble).
@@ -19,21 +19,20 @@ import { tool, type Plugin } from "@opencode-ai/plugin"
 //
 // Config (~/.config/opencode/workflow.json; project override in
 // <worktree>/.opencode/workflow.json; restart after edits):
-//   models          allowlist for opts.model: [{slug, note}] — baked into the
-//                   tool description; empty = session default only
+//   models          allowlist for agent profiles: [{slug, variant, note}] —
+//                   baked into the tool description; empty = session default
 //   maxConcurrency  agents in flight per run (default 8)
-//   maxAgentsPerRun hard cap per run (default 200)
-//   agentTimeoutMs  per-agent timeout (default 15 min)
-//   childSessions   "nested" (default) or "toplevel" sidebar visibility
+//   maxAgentsPerRun hard cap per run (default 100)
+//   agentTimeoutMs  maximum agent working duration (default 30 min)
 //
 // Artifacts per run: ~/.local/share/opencode/workflows/<workflow_YYYYMMDD_HHMMSS>/
-// (script.js, input.json, journal.jsonl, status.json, result.json).
+// (script.js, args.json, journal.jsonl, status.json, result.json).
 //
-// Inline stage/agent cards require the trs fork's POST /session/:id/agent-card
+// Inline phase/agent cards require the trs fork's POST /session/:id/agent-card
 // endpoint; on stock opencode the plugin feature-detects and skips them.
 // ---------------------------------------------------------------------------
 
-type ModelEntry = { slug: string; note?: string }
+type ModelEntry = { slug: string; variant: string; note?: string }
 
 type WorkflowConfig = {
   enabled: boolean
@@ -42,7 +41,6 @@ type WorkflowConfig = {
   maxAgentsPerRun: number
   agentTimeoutMs: number
   dataDir: string
-  childSessions: "nested" | "toplevel"
 }
 
 type AgentOpts = {
@@ -51,38 +49,67 @@ type AgentOpts = {
   variant?: string
   system?: string
   schema?: any
-  retries?: number
-  timeoutMs?: number
-  step?: string
+  phase?: string
 }
 
-type StepState = {
+type WorkflowMeta = {
+  name: string
+  description: string
+  phases?: Array<{ title: string; detail?: string }>
+}
+
+type PhaseState = {
   title: string
   detail?: string
   started: number
   finished: number
   failed: number
-  declaredModel?: string
   models: string[]
 }
 
 type AgentRow = {
   label: string
   model?: string
-  status: "running" | "completed" | "error"
+  status: "running" | "paused" | "completed" | "error"
   sessionID?: string
-  step?: string
+  phase?: string
+}
+
+type Deferred = {
+  promise: Promise<void>
+  resolve: () => void
+}
+
+type AbortOutcome =
+  | { ok: true }
+  | {
+      ok: false
+      error: string
+    }
+
+type AgentControl = {
+  sessionID: string
+  label: string
+  row: AgentRow
+  release?: () => void
+  timer?: ReturnType<typeof setTimeout>
+  gate?: Deferred
+  pauseAbort?: Promise<AbortOutcome>
+  resumeAbort?: Promise<AbortOutcome>
+  state: "active" | "paused" | "resuming"
+  interrupt: "pause" | "resume" | "cancel" | null
 }
 
 type Run = {
   id: string
   name: string
-  status: "running" | "completed" | "failed" | "cancelled"
+  status: "running" | "paused" | "completed" | "failed" | "cancelled"
   callerSessionID: string
   directory: string
   dir: string
   startedAt: number
   finishedAt?: number
+  pausedAt?: number
   agentsSpawned: number
   agentsCompleted: number
   agentsFailed: number
@@ -91,15 +118,20 @@ type Run = {
   result?: any
   cancelled: boolean
   activeSessions: Set<string>
-  steps: StepState[] | null
-  currentStep: string | null
+  activeAgents: Map<string, AgentControl>
+  pauseWaiters: Set<Deferred>
+  phases: PhaseState[] | null
+  currentPhase: string | null
   agentRows: AgentRow[]
   card: { messageID: string; partID: string } | null
   cardQueue: Promise<void>
 }
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-const SCRIPT_PARAMS = ["agent", "parallel", "pipeline", "log", "sleep", "input", "runId", "step"]
+const SCRIPT_PARAMS = ["agent", "parallel", "pipeline", "log", "sleep", "args", "runId", "phase"]
+const META_PREFIX = "export const meta ="
+const CHILD_SYSTEM =
+  "Your final reply is raw workflow return data consumed by an orchestration script, not a message to a user. Your normal session tools and MCP integrations are available, except task and workflow tools."
 const liveRuns = new Map<string, Run>()
 
 // ---------------------------------------------------------------------------
@@ -110,10 +142,9 @@ const DEFAULT_CONFIG: WorkflowConfig = {
   enabled: true,
   models: [],
   maxConcurrency: 8,
-  maxAgentsPerRun: 200,
-  agentTimeoutMs: 900_000,
+  maxAgentsPerRun: 100,
+  agentTimeoutMs: 1_800_000,
   dataDir: path.join(os.homedir(), ".local", "share", "opencode", "workflows"),
-  childSessions: "nested",
 }
 
 function readJsonIfExists(file: string): any {
@@ -131,9 +162,7 @@ function loadConfig(worktree: string | undefined): WorkflowConfig {
   const projectCfg = worktree ? (readJsonIfExists(path.join(worktree, ".opencode", "workflow.json")) ?? {}) : {}
   const merged = { ...DEFAULT_CONFIG, ...globalCfg, ...projectCfg }
   merged.models = Array.isArray(merged.models)
-    ? merged.models
-        .map((m: any) => (typeof m === "string" ? { slug: m } : m))
-        .filter((m: any) => m && typeof m.slug === "string")
+    ? merged.models.filter((model: any) => model && typeof model.slug === "string" && typeof model.variant === "string")
     : []
   return merged
 }
@@ -193,76 +222,196 @@ function extractText(parts: any[]): string {
     .trim()
 }
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  what: string,
-  onTimeout: () => Promise<void>,
-): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)), ms)
   })
   try {
     return await Promise.race([promise, timeout])
-  } catch (e: any) {
-    if (String(e?.message ?? e).includes("timed out")) {
-      await onTimeout().catch(() => {})
-    }
-    throw e
   } finally {
     clearTimeout(timer)
   }
 }
 
-// Minimal JSON Schema check: type, required, properties, items, enum, const.
-function schemaErrors(value: any, schema: any, at = "$"): string[] {
-  if (!schema || typeof schema !== "object") return []
-  const errs: string[] = []
-  const types = schema.type ? (Array.isArray(schema.type) ? schema.type : [schema.type]) : null
-  if (types) {
-    const actual = value === null ? "null" : Array.isArray(value) ? "array" : typeof value
-    const ok = types.some(
-      (t: string) => t === actual || (t === "integer" && actual === "number" && Number.isInteger(value)),
-    )
-    if (!ok) return [`${at}: expected ${types.join("|")}, got ${actual}`]
-  }
-  if (Array.isArray(schema.enum) && !schema.enum.some((e: any) => safeStringify(e) === safeStringify(value))) {
-    errs.push(`${at}: value not in enum ${safeStringify(schema.enum).slice(0, 200)}`)
-  }
-  if (schema.const !== undefined && safeStringify(schema.const) !== safeStringify(value)) {
-    errs.push(`${at}: expected const ${safeStringify(schema.const)}`)
-  }
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    for (const req of schema.required ?? []) {
-      if (!(req in value)) errs.push(`${at}.${req}: missing required property`)
-    }
-    for (const [key, sub] of Object.entries(schema.properties ?? {})) {
-      if (key in value) errs.push(...schemaErrors(value[key], sub, `${at}.${key}`))
-    }
-  }
-  if (Array.isArray(value) && schema.items) {
-    value.forEach((v, i) => errs.push(...schemaErrors(v, schema.items, `${at}[${i}]`)))
-  }
-  return errs
+function deferred(): Deferred {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
 }
 
-function parseJsonReply(text: string): { ok: true; value: any } | { ok: false; error: string } {
-  const candidates: string[] = []
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (fenced) candidates.push(fenced[1])
-  candidates.push(text)
-  const firstBrace = Math.min(...[text.indexOf("{"), text.indexOf("[")].filter((i) => i >= 0))
-  const lastBrace = Math.max(text.lastIndexOf("}"), text.lastIndexOf("]"))
-  if (Number.isFinite(firstBrace) && lastBrace > firstBrace) {
-    candidates.push(text.slice(firstBrace, lastBrace + 1))
+function parseScript(script: string): {
+  meta: WorkflowMeta
+  executable: string
+} {
+  if (!script.startsWith(META_PREFIX)) {
+    throw new Error(`script must begin exactly with ${META_PREFIX}{...}`)
   }
-  for (const candidate of candidates) {
-    try {
-      return { ok: true, value: JSON.parse(candidate.trim()) }
-    } catch {}
+
+  let start = META_PREFIX.length
+  while (/\s/.test(script[start] ?? "")) start++
+  if (script[start] !== "{") throw new Error("meta must be an object literal")
+
+  let end = -1
+  let depth = 0
+  let quote: string | null = null
+  let escaped = false
+  for (let index = start; index < script.length; index++) {
+    const char = script[index]!
+    if (quote) {
+      if (escaped) escaped = false
+      else if (char === "\\") escaped = true
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === "`") throw new Error("meta must not contain template literals or interpolation")
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === "{") depth++
+    if (char === "}" && --depth === 0) {
+      end = index + 1
+      break
+    }
   }
-  return { ok: false, error: "reply was not parseable as JSON" }
+  if (quote || end < 0) throw new Error("meta object literal is not balanced")
+
+  const literal = script.slice(start, end)
+  let index = 0
+  const skipSpace = () => {
+    while (/\s/.test(literal[index] ?? "")) index++
+  }
+  const fail = (message: string): never => {
+    throw new Error(`${message} at meta character ${index + 1}`)
+  }
+  const readString = () => {
+    const delimiter = literal[index++]!
+    let escapedString = false
+    while (index < literal.length) {
+      const char = literal[index++]!
+      if (escapedString) escapedString = false
+      else if (char === "\\") escapedString = true
+      else if (char === delimiter) return
+    }
+    fail("meta contains an unterminated string")
+  }
+  const readIdentifier = () => {
+    const match = literal.slice(index).match(/^[A-Za-z_$][A-Za-z0-9_$]*/)
+    const identifier = match?.[0]
+    if (!identifier) throw new Error(`meta expected an identifier at meta character ${index + 1}`)
+    index += identifier.length
+    return identifier
+  }
+  const readValue = (): void => {
+    skipSpace()
+    const char = literal[index]
+    if (literal.startsWith("...", index)) fail("meta must not contain spreads")
+    if (char === "(" || char === ")") fail("meta must not contain calls or expressions")
+    if (char === "{") return readObject()
+    if (char === "[") return readArray()
+    if (char === '"' || char === "'") return readString()
+    const number = literal.slice(index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/)
+    if (number) {
+      index += number[0].length
+      return
+    }
+    const identifier = readIdentifier()
+    skipSpace()
+    if (literal[index] === "(") fail("meta must not contain calls or expressions")
+    if (identifier !== "true" && identifier !== "false" && identifier !== "null") {
+      fail(`meta value "${identifier}" is not a literal; variables are not allowed`)
+    }
+  }
+  const readObject = (): void => {
+    index++
+    skipSpace()
+    if (literal[index] === "}") {
+      index++
+      return
+    }
+    while (index < literal.length) {
+      skipSpace()
+      if (literal.startsWith("...", index)) fail("meta must not contain spreads")
+      if (literal[index] === '"' || literal[index] === "'") readString()
+      else readIdentifier()
+      skipSpace()
+      if (literal[index++] !== ":") fail("meta object properties require explicit values")
+      readValue()
+      skipSpace()
+      if (literal[index] === "}") {
+        index++
+        return
+      }
+      if (literal[index++] !== ",") fail("meta object properties must be comma-separated")
+      skipSpace()
+      if (literal[index] === "}") {
+        index++
+        return
+      }
+    }
+    fail("meta object literal is not balanced")
+  }
+  const readArray = (): void => {
+    index++
+    skipSpace()
+    if (literal[index] === "]") {
+      index++
+      return
+    }
+    while (index < literal.length) {
+      readValue()
+      skipSpace()
+      if (literal[index] === "]") {
+        index++
+        return
+      }
+      if (literal[index++] !== ",") fail("meta array values must be comma-separated")
+      skipSpace()
+      if (literal[index] === "]") {
+        index++
+        return
+      }
+    }
+    fail("meta array literal is not balanced")
+  }
+
+  readValue()
+  skipSpace()
+  if (index !== literal.length) fail("meta contains a non-literal expression")
+
+  const meta = new Function(`return (${literal})`)() as WorkflowMeta
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) throw new Error("meta must be an object literal")
+  const keys = Object.keys(meta)
+  const unknown = keys.filter((key) => !["name", "description", "phases"].includes(key))
+  if (unknown.length > 0) throw new Error(`meta contains unsupported field(s): ${unknown.join(", ")}`)
+  if (typeof meta.name !== "string" || !meta.name.trim()) throw new Error("meta.name is required and must be a string")
+  if (typeof meta.description !== "string" || !meta.description.trim()) {
+    throw new Error("meta.description is required and must be a string")
+  }
+  if (meta.phases !== undefined) {
+    if (!Array.isArray(meta.phases)) throw new Error("meta.phases must be an array")
+    for (const [phaseIndex, phase] of meta.phases.entries()) {
+      if (!phase || typeof phase !== "object" || Array.isArray(phase)) {
+        throw new Error(`meta.phases[${phaseIndex}] must be an object literal`)
+      }
+      const phaseKeys = Object.keys(phase)
+      const unsupported = phaseKeys.filter((key) => key !== "title" && key !== "detail")
+      if (unsupported.length > 0) {
+        throw new Error(`meta.phases[${phaseIndex}] contains unsupported field(s): ${unsupported.join(", ")}`)
+      }
+      if (typeof phase.title !== "string" || !phase.title.trim()) {
+        throw new Error(`meta.phases[${phaseIndex}].title is required and must be a string`)
+      }
+      if (phase.detail !== undefined && typeof phase.detail !== "string") {
+        throw new Error(`meta.phases[${phaseIndex}].detail must be a string`)
+      }
+    }
+  }
+
+  return { meta, executable: script.slice("export ".length) }
 }
 
 function parseModelSlug(slug: string): { providerID: string; modelID: string } {
@@ -285,19 +434,22 @@ function statusSnapshot(run: Run) {
     callerSessionID: run.callerSessionID,
     directory: run.directory,
     startedAt: new Date(run.startedAt).toISOString(),
+    pausedAt: run.pausedAt ? new Date(run.pausedAt).toISOString() : null,
     finishedAt: run.finishedAt ? new Date(run.finishedAt).toISOString() : null,
     durationMs: (run.finishedAt ?? Date.now()) - run.startedAt,
     agentsSpawned: run.agentsSpawned,
     agentsCompleted: run.agentsCompleted,
     agentsFailed: run.agentsFailed,
-    steps: run.steps
-      ? run.steps.map((s) => ({
-          title: s.title,
-          started: s.started,
-          finished: s.finished,
-          failed: s.failed,
+    phases: run.phases
+      ? run.phases.map((phase) => ({
+          title: phase.title,
+          started: phase.started,
+          finished: phase.finished,
+          failed: phase.failed,
         }))
       : undefined,
+    agents: run.agentRows,
+    ...(run.status === "paused" ? { hint: `Call workflow_resume({ runId: "${run.id}" }) to continue.` } : {}),
     scriptPath: path.join(run.dir, "script.js"),
     logs: run.logs.slice(-100),
     error: run.error ?? null,
@@ -329,76 +481,137 @@ function journal(run: Run, entry: Record<string, any>) {
 
 function modelSection(cfg: WorkflowConfig, variantsBySlug: Map<string, string[]>): string {
   if (cfg.models.length === 0) {
-    return `MODELS: no allowlist is configured, so omit opts.model (agents use the session default model). To enable per-agent model selection, add slugs to ~/.config/opencode/workflow.json and restart opencode.`
+    return `MODEL PROFILES: no allowlist is configured, so omit opts.model and opts.variant (agents use the session default model). To enable per-agent model selection, add profiles to ~/.config/opencode/workflow.json and restart opencode.`
   }
-  const lines = cfg.models.map((m) => {
-    const variants = variantsBySlug.get(m.slug)
-    const variantNote = variants?.length ? ` [variants: ${variants.join(", ")}]` : ""
-    return `  - "${m.slug}"${variantNote}${m.note ? ` — ${m.note}` : ""}`
+  const lines = cfg.models.map((model) => {
+    const knownVariants = variantsBySlug.get(model.slug)
+    const unsupported = knownVariants && !knownVariants.includes(model.variant) ? " [unsupported variant]" : ""
+    return `  - model: "${model.slug}", variant: "${model.variant}"${unsupported}${model.note ? ` — ${model.note}` : ""}`
   })
-  return `MODELS — opts.model is REQUIRED on every agent() call and must be one of these slugs (pick deliberately per the notes; never rely on a default):\n${lines.join("\n")}\nopts.variant sets the reasoning effort for the agent, chosen from that model's [variants] list (omit for the model's default). Spend effort where it pays: high/xhigh/max for verification, judging, and design stages; low for mechanical scans, extraction, and formatting.\n(Models configured in ~/.config/opencode/workflow.json; edits require an opencode restart.)`
+  return `MODEL PROFILES — every agent() call must explicitly declare an exact model and variant pair from this list (pick deliberately per the notes; never rely on a default):\n${lines.join("\n")}\n(Profiles configured in ~/.config/opencode/workflow.json; edits require an opencode restart.)`
 }
 
 function runDescription(cfg: WorkflowConfig, variantsBySlug: Map<string, string[]>): string {
-  return `Run a multi-agent orchestration script in the background. Use when a task benefits from fanning out across many subagents with deterministic control flow: parallel research, code review with adversarial verification, migrations, audits, broad sweeps.
+  return `Run a model-neutral multi-agent orchestration script in the background. Use workflow_run whenever delegation helps, including a one-off agent. It is especially useful for parallel research, reviews with adversarial verification, migrations, audits, broad sweeps, and comparing independent attempts. No user opt-in is required.
 
-HOW IT RUNS: this tool returns IMMEDIATELY with a run id. The workflow executes in the background; when it finishes (or fails), a completion message containing the result is automatically injected into this session as a new message. After starting a workflow, finish your turn normally — do NOT wait, poll in a loop, or sleep. Use workflow_status only if the user asks for progress. The result message will wake you.
+HOW IT RUNS: workflow_run returns IMMEDIATELY with a run id. The script continues in the server; completion or failure injects a synthetic message into this session. Finish your turn normally after starting it. Do not wait, poll, or sleep; use workflow_status only for an explicit progress request. A child's final output is raw workflow return data, not a user-facing response. You must synthesize the workflow result for the user. Runs and manual resume state do not survive an opencode server restart.
 
-SCRIPT FORMAT: plain JavaScript forming the BODY of an async function. No imports, no TypeScript syntax, no filesystem access, no fetch. Use await directly. \`return\` a JSON-serializable value — it becomes the workflow result delivered back to you. Runs die if the opencode server restarts (they do not survive quitting the TUI).
+SCRIPT SOURCE: provide exactly one of \`script\` or \`scriptPath\`. A scriptPath is read fresh and copied into the new run's artifacts; this is iteration, not a saved-workflow registry. Inline scripts are also persisted as script.js. Every script must BEGIN exactly with a pure literal:
+  export const meta = { name: "review-files", description: "Review files and verify findings", phases: [{ title: "Review" }, { title: "Verify", detail: "Refute candidate findings" }] }
+Then write plain JavaScript forming an async function body. Metadata admits only literal data: name and description are required; phases is optional and contains {title, detail?}. Variables, calls, spreads, template literals, interpolation, and model fields are rejected. No imports or TypeScript. Workflow scripts must not use filesystem, Node APIs, fetch, or hidden globals. Return a JSON-serializable value.
 
-INJECTED PRIMITIVES (these exact names are in scope; nothing else is):
-- await agent(prompt, opts?) -> string, or a validated object when opts.schema is set. Spawns one subagent in a fresh child session in the current project directory. The child has the normal coding tools (read/edit/bash) but CANNOT see this conversation or the script — every prompt must be fully self-contained (absolute paths, all needed context inline). Throws on failure/timeout/cancellation. opts:
-    label: short display label used in child session titles and the journal
-    model: REQUIRED — model slug from the MODELS list below; every agent must explicitly declare its model (calls without opts.model throw)
-    variant: reasoning effort for this agent (e.g. "low", "high", "xhigh") — must be one of the chosen model's [variants] listed below; omit for the model's default
-    system: extra system prompt text for the child
-    schema: JSON Schema the reply must satisfy. The child is instructed to reply with only matching JSON; the reply is parsed and validated, and on mismatch the child is asked to correct itself up to \`retries\` times before the call throws. Supported keywords: type, properties, required, items, enum, const.
-    retries: schema-correction attempts (default 2)
-    timeoutMs: per-agent timeout (default ${cfg.agentTimeoutMs}ms); on timeout the child session is aborted and the call throws
-    step: title of the declared step this agent belongs to (see STEPS below); most reliable way to attribute agents inside pipeline stages and parallel thunks
-- await parallel(thunks) -> array. Runs an array of zero-arg functions concurrently and waits for ALL of them (a barrier). A thunk that throws resolves to null instead of rejecting — .filter(Boolean) the results. Example: await parallel(files.map(f => () => agent(\`Review \${f}\`)))
-- await pipeline(items, ...stages) -> array. Each item flows through the stages independently with NO barrier between stages — item A can be in stage 3 while item B is still in stage 1, so wall-clock is the slowest single chain, not the sum of slowest-per-stage. Each stage receives (previousResult, originalItem, index). A stage that throws drops that item's result to null and skips its remaining stages. PREFER pipeline for multi-stage work; use parallel only when a step genuinely needs ALL prior results at once (dedup across findings, early exit on zero results).
-- log(message): appends a progress line (visible via workflow_status, recorded in the journal). Use it at meaningful checkpoints.
-- await sleep(ms)
-- step(title): sets the current step for subsequent agent() calls (an alternative to opts.step for strictly sequential scripts; under concurrency prefer opts.step)
-- input: the JSON value passed as this tool's \`input\` argument (undefined if omitted)
-- runId: this run's id string
+INJECTED PRIMITIVES:
+- await agent(prompt, opts?) -> raw text, structured data when opts.schema is set, or null after terminal failure. Each call creates a nested child session in the current project. Children cannot see this conversation or script, so prompts must be self-contained. Children inherit available session tools and MCP integrations, except task and workflow tools are disabled to prevent recursion.
+    label: short child title and journal label
+${
+  cfg.models.length > 0
+    ? `    model: REQUIRED exact slug from MODEL PROFILES
+    variant: REQUIRED exact variant paired with that slug`
+    : `    model: omit when no profiles are configured
+    variant: omit when no profiles are configured`
+}
+    system: additional child system text
+    schema: JSON Schema passed through OpenCode's native structured-output format with two retries; returns AssistantMessage.structured
+    phase: declared meta.phases title. Prefer opts.phase inside concurrent callbacks.
+- await pipeline(items, ...stages) -> array. DEFAULT for multi-stage work. Every item advances independently through stages; item A may be verified while item B is still being discovered. Each stage receives (previousResult, originalItem, index). A failed item becomes null and skips its remaining stages.
+- await parallel(thunks) -> array. Runs zero-argument functions concurrently and waits for all. Failed thunks resolve as null.
+- phase(title): sets the default phase for later agent calls. Use only in sequential code; concurrent callbacks should use opts.phase.
+- log(message), await sleep(ms), args (the tool's JSON args), runId.
 
-STEPS — ALWAYS declare the plan upfront via the \`steps\` argument (an ordered array of {title, detail?, model?, variant?}). Each step renders in the user's conversation as a stage card: grayed out while pending, active once its first agent starts, settled when its agents finish — this is how the user gauges overall progress, so pick 2-8 coarse steps that mirror the script's stages (e.g. "Survey", "Review", "Verify", "Synthesize"). Declare each step's planned model/variant so the user sees the model lineup before anything runs. Attribute every agent() call to a step via opts.step (title must match a declared step exactly) or a preceding step("Title") call. Each agent renders as a row nested under its stage (with its model and a link to its session), so keep agent labels short and meaningful; agents without a step render at the bottom of the widget.
+PHASES: meta.phases is an ordered coarse progress plan, normally 2-8 entries. It controls cards only, not model routing. Attribute calls with opts.phase or phase(). Keep labels short. A workflow normally discovers its own scope rather than requiring inline scouting first. For large multi-phase work, prefer separate focused workflows and let the main agent inspect each result and decide what workflow to run next.
 
-LIMITS & FAILURE SEMANTICS: at most ${cfg.maxConcurrency} agents run concurrently (excess queue automatically) and at most ${cfg.maxAgentsPerRun} agents per run (exceeding this throws). agent() THROWS on failure — inside parallel/pipeline that becomes a null result; a bare await agent() at top level will fail the whole workflow unless you try/catch. Every agent's full prompt and reply are recorded in the run's journal.jsonl. Subagents cannot start workflows (no recursion).
+BARRIERS: pipeline is the default. A barrier is valid only when the next operation truly requires the complete prior set: global deduplication/ranking, synthesis across all evidence, a completeness decision, an early exit based on total count, or a main-agent decision between phases. Invalid reasons include matching phase names, visual organization, "finish research before review," or batching work that can be checked item-by-item. Smell test: can result B start its next operation before result A finishes? If yes, a barrier is unnecessary.
+- Invalid: \`const reviews = await parallel(files.map(file => () => review(file))); const checks = await parallel(reviews.flatMap(review => review.findings.map(finding => () => verify(finding))))\`. Verification waits for the slowest review.
+- Rewrite: \`await pipeline(files, (_, file) => review(file), review => parallel(review.findings.map(finding => () => verify(finding))))\`. Findings stream into verification.
+- Valid: \`const reports = await parallel(sources.map(source => () => research(source))); return agent("Synthesize every report: " + JSON.stringify(reports), ...)\` because synthesis needs the full set.
+
+WORKFLOW TAXONOMY:
+- Understand: investigate unfamiliar code, map behavior and dependencies, then synthesize an explanation. Parallelize independent areas; avoid premature design.
+- Design: produce independent designs under the same constraints, critique tradeoffs, then synthesize a chosen design. Keep implementation out unless requested.
+- Review: divide by meaningful quality dimensions, report concrete evidence, and adversarially verify candidates before presenting findings.
+- Research: investigate independent sources or hypotheses in parallel, preserve citations/evidence, then reconcile conflicts and gaps.
+- Migrate: inventory the full scope, transform independent units, validate each as soon as it completes, then run a global completeness check.
+
+QUALITY PATTERNS:
+- Canonical review: assign dimensions such as correctness, security, concurrency, data integrity, API compatibility, and tests. Stream each dimension's candidates immediately into an adversarial verifier that tries to refute them from source evidence.
+- Majority-vote refutation: use multiple independent skeptics per claim; retain it only when the required majority fails to refute it. Record dissent, not just the vote.
+- Perspective-diverse verification: verify from distinct failure perspectives rather than duplicating the same prompt.
+- Judge panel: create independent attempts, score every attempt in parallel against explicit criteria, then synthesize a result that uses the winner while grafting in stronger ideas from runners-up.
+- Loop-until-count: continue independent discovery until the requested number of unique, supported results is reached; dedupe before counting.
+- Loop-until-dry: continue until consecutive rounds produce no new findings. Dedupe against ALL previously seen candidates, including rejected ones, so rediscovery does not fake progress.
+- Multi-modal sweep: combine structural search, behavioral tracing, history/docs, tests, and boundary analysis; different methods expose different misses.
+- Completeness critic: give a critic the scope and all seen results, ask what is missing, then feed its uncovered dimensions into another discovery/verification round.
+- Never impose a silent coverage cap. If the user asks for exhaustive or comprehensive work, continue to the semantic stop condition or return an explicit limitation.
+
+SCALING: follow explicit wording first. "Quick" means a small proportional fan-out and minimal verification. "Thorough," "audit," "comprehensive," or "exhaustive" means broader dimensions, independent verification, and completeness checks. When wording is silent, scale by ambiguity, risk, and scope. Keep agent counts proportional; more agents without distinct work do not improve quality.
+
+LIMITS AND RECOVERY: at most ${cfg.maxConcurrency} agents work concurrently and ${cfg.maxAgentsPerRun} may be spawned. agent(), parallel(), and pipeline() preserve terminal agent failures as null. Always inspect journal.jsonl before speculating about empty or surprising results. Every full prompt, result, failure, pause, and transition is journaled. There is no automatic network retry. If any agent reaches ${cfg.agentTimeoutMs}ms of working time, the entire run pauses, all active requests are aborted, slots are released, and the caller is not notified. workflow_resume resumes every paused child in the same session with reset timers only after every interruption is confirmed; otherwise the run remains paused for another resume attempt. On a running run it explicitly interrupts and re-prompts all in-flight children. workflow_cancel ends running or paused work.
 
 ${modelSection(cfg, variantsBySlug)}
 
-CANONICAL EXAMPLE — review three files, verify each finding as soon as its review completes.
-Tool call: { name: "review-files", steps: [{ title: "Review", detail: "one reviewer per file", model: "openai/gpt-5.6-sol" }, { title: "Verify", detail: "adversarial check per finding", model: "github-copilot/claude-fable-5", variant: "high" }], input: { files: [...] }, script: ... }
+COMPOSED EXHAUSTIVE-REVIEW EXAMPLE: pass files, dimensions, sweep prompts, and all exact configured profiles through args. Each args.verifiers entry pairs a named perspective with a configured model and variant. Reviews stream into perspective-diverse majority refutation; independent sweeps continue until dry; a completeness critic supplies a final round.
+  export const meta = { name: "exhaustive-review", description: "Exhaustive review with adversarial verification", phases: [
+    { title: "Discover", detail: "Dimension and multi-modal sweeps" },
+    { title: "Verify", detail: "Independent refutation" },
+    { title: "Complete", detail: "Find gaps and run another round" }
+  ] }
   const FINDINGS = { type: "object", required: ["findings"], properties: { findings: { type: "array", items: {
-    type: "object", required: ["file", "line", "summary"], properties: {
-      file: { type: "string" }, line: { type: "integer" }, summary: { type: "string" } } } } } }
-  const VERDICT = { type: "object", required: ["isReal", "reasoning"], properties: {
-    isReal: { type: "boolean" }, reasoning: { type: "string" } } }
-  const reviewed = await pipeline(
-    input.files,
-    (_, file) => agent(\`Review \${file} for correctness bugs. Report each with file, line, summary.\`, { label: \`review \${file}\`, step: "Review", schema: FINDINGS }),
-    (review, file) => parallel((review?.findings ?? []).map(f => () =>
-      agent(\`Adversarially verify this bug report — try to REFUTE it by reading the code: \${JSON.stringify(f)}\`, { label: \`verify \${f.file}:\${f.line}\`, step: "Verify", schema: VERDICT })
-        .then(v => ({ ...f, ...v })))),
+    type: "object", required: ["file", "line", "summary", "evidence"], properties: {
+      file: { type: "string" }, line: { type: "integer" },
+      summary: { type: "string" }, evidence: { type: "string" } } } } } }
+  const VERDICT = { type: "object", required: ["refuted", "reason"], properties: {
+    refuted: { type: "boolean" }, reason: { type: "string" } } }
+  const GAPS = { type: "object", required: ["dimensions"], properties: {
+    dimensions: { type: "array", items: { type: "string" } } } }
+  const seen = new Map()
+  const normalize = value => String(value ?? "").toLowerCase().replace(/\\s+/g, " ").trim()
+  const findingKey = finding => JSON.stringify([
+    normalize(finding.file), Number(finding.line), normalize(finding.summary), normalize(finding.evidence)
+  ])
+  const verify = async finding => {
+    const key = findingKey(finding)
+    if (seen.has(key)) return null
+    seen.set(key, finding)
+    const votes = await parallel(args.verifiers.map(verifier => () => agent(
+      "Try to refute this candidate from repository evidence. Perspective: " + verifier.perspective + "\\nCandidate: " + JSON.stringify(finding),
+      { label: "refute " + finding.file + ":" + finding.line + " " + verifier.perspective, phase: "Verify", model: verifier.model, variant: verifier.variant, schema: VERDICT }
+    )))
+    const valid = votes.filter(Boolean)
+    const refutations = valid.filter(vote => vote.refuted).length
+    return valid.length > 0 && refutations < Math.ceil(valid.length / 2) ? { ...finding, verification: valid } : null
+  }
+  const discover = dimensions => pipeline(
+    dimensions,
+    (_, dimension) => agent(
+      "Review these files only for " + dimension + ". Return concrete supported candidates: " + JSON.stringify(args.files),
+      { label: "review " + dimension, phase: "Discover", model: args.reviewer.model, variant: args.reviewer.variant, schema: FINDINGS }
+    ),
+    report => parallel((report?.findings ?? []).map(finding => () => verify(finding)))
   )
-  const confirmed = reviewed.filter(Boolean).flat().filter(Boolean).filter(f => f.isReal)
-  log(\`\${confirmed.length} confirmed findings\`)
-  return { confirmed }
-
-OTHER USEFUL SHAPES:
-- Adversarial majority vote: spawn 3 skeptics per claim, keep the claim only if >=2 fail to refute it.
-- Loop-until-dry for unknown-size discovery: keep spawning finder agents until 2 consecutive rounds surface nothing new (dedupe against everything seen, not just confirmed).
-- Judge panel: N independent attempts from different angles, then one judge agent scores them and you return the winner.
-
-Scale agent counts to what the user asked for: a quick check warrants a few agents; "thorough"/"audit"/"comprehensive" warrants wide fan-out plus verification stages.`
+  const confirmed = (await discover(args.dimensions)).filter(Boolean).flat().filter(Boolean)
+  let dryRounds = 0
+  while (dryRounds < 2) {
+    const before = seen.size
+    const sweeps = await parallel(args.sweeps.map((sweep, index) => () => agent(
+      sweep + "\\nFiles: " + JSON.stringify(args.files) + "\\nAlready seen candidates: " + JSON.stringify([...seen.values()]),
+      { label: "sweep " + index, phase: "Discover", model: args.finder.model, variant: args.finder.variant, schema: FINDINGS }
+    )))
+    const checked = await parallel(sweeps.filter(Boolean).flatMap(report => report.findings.map(finding => () => verify(finding))))
+    confirmed.push(...checked.filter(Boolean))
+    dryRounds = seen.size === before ? dryRounds + 1 : 0
+  }
+  const gaps = await agent(
+    "Critique completeness. Identify uncovered review dimensions from the scope and all seen candidates: " + JSON.stringify({ files: args.files, seen: [...seen.values()] }),
+    { label: "completeness", phase: "Complete", model: args.critic.model, variant: args.critic.variant, schema: GAPS }
+  )
+  if (gaps?.dimensions?.length) confirmed.push(...(await discover(gaps.dimensions)).filter(Boolean).flat().filter(Boolean))
+  log(confirmed.length + " confirmed unique findings")
+  return { confirmed, seen: seen.size }`
 }
 
-const STATUS_DESCRIPTION = `Check on background workflows started with workflow_run. Without runId: lists recent runs (id, name, status, agent counts). With runId: full status, recent progress logs, and the result (or error) if finished. Runs marked "interrupted" were killed by an opencode server restart and will never complete — tell the user instead of waiting. Do NOT call this in a polling loop; completed workflows announce themselves with an injected message.`
+const STATUS_DESCRIPTION = `Check background workflows. Without runId, lists recent runs. With runId, returns phases, agents, pause state, recent logs, and a finished result or error. A paused live run clearly indicates workflow_resume. Running or paused disk state without a live run is "interrupted" after server restart and cannot be resumed. Do not poll; completed workflows announce themselves.`
 
-const CANCEL_DESCRIPTION = `Cancel a running background workflow started with workflow_run. Aborts all in-flight child agent sessions and stops the script from spawning more. Already-completed agent work remains recorded in the run's journal.`
+const CANCEL_DESCRIPTION = `Cancel a running or paused workflow. Aborts in-flight child sessions, settles paused agents, and stops new agents. Completed work remains in the journal.`
 
 // ---------------------------------------------------------------------------
 // Plugin
@@ -424,7 +637,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     for (let attempt = 1; attempt <= 12; attempt++) {
       try {
         const res = unwrap(
-          await withTimeout(client.config.providers({}) as Promise<any>, 15_000, "config.providers", async () => {}),
+          await withTimeout(client.config.providers({}) as Promise<any>, 15_000, "config.providers"),
           "config.providers",
         )
         const providers = res?.providers ?? (Array.isArray(res) ? res : [])
@@ -495,28 +708,43 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     }
   }
 
-  // Step progress cards: one card per declared step, pending upfront, running
+  // Phase progress cards: one card per declared phase, pending upfront, running
   // while its agents are in flight, settled with aggregate counts.
 
-  function stepStatus(run: Run, step: StepState, final: boolean): string {
-    if (step.started === 0) {
+  function phaseStatus(run: Run, phase: PhaseState, final: boolean): string {
+    if (phase.started === 0) {
       if (!final) return "pending"
       return run.status === "completed" ? "skipped" : "pending"
     }
-    const settled = step.finished + step.failed >= step.started
+    if (run.agentRows.some((row) => row.phase === phase.title && row.status === "paused")) return "paused"
+    const settled = phase.finished + phase.failed >= phase.started
     if (!settled) return final ? (run.status === "completed" ? "completed" : "error") : "running"
-    return step.failed > 0 && step.finished === 0 ? "error" : "completed"
+    return phase.failed > 0 && phase.finished === 0 ? "error" : "completed"
   }
 
   function runCardBody(run: Run, final = false) {
-    const steps = run.steps?.map((step) => ({
-      title: step.title,
-      detail: step.detail,
-      status: stepStatus(run, step, final),
-      model: step.models.length > 0 ? step.models.join(", ") : step.declaredModel,
-      agents: run.agentRows.filter((row) => row.step === step.title),
-    }))
-    const status = run.status === "running" ? "running" : run.status === "completed" ? "completed" : "error"
+    // The fork's existing card payload calls phases "steps"; keep that wire key
+    // while the workflow script API consistently uses phase terminology.
+    const paused = run.status === "paused"
+    const displayRow = (row: AgentRow) =>
+      paused && row.status === "paused" ? { ...row, label: `${row.label} [paused]` } : row
+    const steps = run.phases?.map((phase) => {
+      const status = phaseStatus(run, phase, final)
+      return {
+        title: status === "paused" ? `${phase.title} [paused]` : phase.title,
+        detail: phase.detail,
+        status,
+        model: phase.models.length > 0 ? phase.models.join(", ") : undefined,
+        agents: run.agentRows.filter((row) => row.phase === phase.title).map(displayRow),
+      }
+    })
+    const status = paused
+      ? "pending"
+      : run.status === "running"
+        ? "running"
+        : run.status === "completed"
+          ? "completed"
+          : "error"
     const summary = `${run.agentsCompleted} agent(s) completed${run.agentsFailed ? `, ${run.agentsFailed} failed` : ""}`
     return {
       tool: "workflow",
@@ -530,10 +758,16 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         uiOnly: true,
         workflow: {
           runId: run.id,
-          name: run.name,
+          name: paused ? `${run.name} [paused]` : run.name,
           status: run.status,
+          ...(run.pausedAt ? { pausedAt: new Date(run.pausedAt).toISOString() } : {}),
+          ...(run.status === "paused"
+            ? {
+                hint: `Call workflow_resume({ runId: "${run.id}" }) to continue.`,
+              }
+            : {}),
           ...(steps ? { steps } : {}),
-          agents: run.agentRows.filter((row) => !row.step),
+          agents: run.agentRows.filter((row) => !row.phase).map(displayRow),
         },
       },
       ...(run.card ?? {}),
@@ -550,15 +784,15 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     return run.cardQueue
   }
 
-  function resolveStep(run: Run, opts: AgentOpts): StepState | null {
-    const name = opts.step ?? run.currentStep
-    if (!run.steps || !name) return null
-    const found = run.steps.find((s) => s.title.toLowerCase() === String(name).toLowerCase())
+  function resolvePhase(run: Run, opts: AgentOpts): PhaseState | null {
+    const name = opts.phase ?? run.currentPhase
+    if (!run.phases || !name) return null
+    const found = run.phases.find((phase) => phase.title.toLowerCase() === String(name).toLowerCase())
     if (!found)
       journal(run, {
-        type: "unknown_step",
-        step: name,
-        known: run.steps.map((s) => s.title),
+        type: "unknown_phase",
+        phase: name,
+        known: run.phases.map((phase) => phase.title),
       })
     return found ?? null
   }
@@ -567,48 +801,255 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
   // Script primitives
   // -------------------------------------------------------------------------
 
-  async function runAgent(run: Run, semaphore: Semaphore, prompt: string, opts: AgentOpts = {}): Promise<any> {
-    if (typeof prompt !== "string" || prompt.trim() === "") {
-      throw new Error("agent(prompt) requires a non-empty string prompt")
-    }
-    const step = resolveStep(run, opts)
-    if (run.cancelled) throw new Error("workflow was cancelled")
-    if (run.agentsSpawned >= cfg.maxAgentsPerRun) {
-      throw new Error(`agent cap reached (${cfg.maxAgentsPerRun} per run)`)
-    }
-    if (!opts.model) {
-      throw new Error(
-        `agent("${prompt.slice(0, 40)}...") is missing opts.model — every agent must explicitly pick a model${allowedModels.size > 0 ? ` from: ${[...allowedModels].join(", ")}` : ""}`,
-      )
-    }
-    if (allowedModels.size > 0 && !allowedModels.has(opts.model)) {
-      throw new Error(`model "${opts.model}" is not in the configured allowlist: ${[...allowedModels].join(", ")}`)
-    }
-    if (opts.variant && opts.model) {
-      const known = variantsBySlug.get(opts.model)
-      if (known && !known.includes(opts.variant)) {
-        throw new Error(`variant "${opts.variant}" is not supported by ${opts.model}; supported: ${known.join(", ")}`)
+  class WorkflowCancelledError extends Error {}
+
+  async function waitWhilePaused(run: Run) {
+    while (run.status === "paused" && !run.cancelled) {
+      const gate = deferred()
+      run.pauseWaiters.add(gate)
+      try {
+        await gate.promise
+      } finally {
+        run.pauseWaiters.delete(gate)
       }
     }
-    const model = opts.model ? parseModelSlug(opts.model) : undefined
-    const label = opts.label ?? prompt.replace(/\s+/g, " ").slice(0, 60)
-    const timeoutMs = opts.timeoutMs ?? cfg.agentTimeoutMs
-    const retries = opts.retries ?? 2
-    run.agentsSpawned++
-    writeStatus(run)
+    if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
+  }
 
-    const release = await semaphore.acquire()
+  async function abortAgent(run: Run, control: AgentControl, action: string): Promise<AbortOutcome> {
+    try {
+      unwrap(
+        await withTimeout(
+          client.session.abort({
+            path: { id: control.sessionID },
+          }) as Promise<any>,
+          15_000,
+          `session.abort for ${control.label}`,
+        ),
+        "session.abort",
+      )
+      return { ok: true }
+    } catch (e: any) {
+      const error = String(e?.message ?? e)
+      journal(run, {
+        type: "agent_abort_error",
+        action,
+        label: control.label,
+        sessionID: control.sessionID,
+        error,
+      })
+      return { ok: false, error }
+    }
+  }
+
+  async function awaitResumeAbort(control: AgentControl): Promise<AbortOutcome | undefined> {
+    const pending = control.resumeAbort
+    if (!pending) return undefined
+    const outcome = await pending
+    if (control.resumeAbort === pending) control.resumeAbort = undefined
+    return outcome
+  }
+
+  function resetAgentTimer(run: Run, control: AgentControl) {
+    clearTimeout(control.timer)
+    control.timer = undefined
+    if (run.status !== "running" || run.cancelled) return
+    control.timer = setTimeout(() => {
+      control.timer = undefined
+      pauseRun(run, { label: control.label, sessionID: control.sessionID })
+    }, cfg.agentTimeoutMs)
+  }
+
+  function pauseRun(run: Run, trigger: { label: string; sessionID: string }) {
+    if (run.status !== "running" || run.cancelled) return
+    run.status = "paused"
+    run.pausedAt = Date.now()
+    const controls = [...run.activeAgents.values()]
+    for (const control of controls) {
+      clearTimeout(control.timer)
+      control.timer = undefined
+      control.interrupt = "pause"
+      control.state = "paused"
+      control.row.status = "paused"
+      control.gate ??= deferred()
+      control.release?.()
+      control.release = undefined
+      control.pauseAbort = abortAgent(run, control, "pause")
+    }
+    journal(run, {
+      type: "paused",
+      trigger,
+      pausedAgents: controls.length,
+      reason: `agent reached the ${cfg.agentTimeoutMs}ms working-duration limit`,
+    })
+    writeStatus(run)
+    pushRunCard(run)
+  }
+
+  async function resumeRun(run: Run): Promise<string> {
+    if (run.cancelled) return `Run ${run.id} is cancelling and cannot be resumed.`
+    if (run.status === "paused") {
+      const controls = [...run.activeAgents.values()].filter(
+        (control) => control.state === "paused" || control.gate !== undefined,
+      )
+      const outcomes = await Promise.all(
+        controls.map(async (control) => {
+          if (!control.pauseAbort) {
+            return { control, succeeded: 0, failed: 0, abortFailed: false }
+          }
+          const initial = await control.pauseAbort
+          if (initial.ok) return { control, succeeded: 1, failed: 0, abortFailed: false }
+          const retry = await abortAgent(run, control, "resume_paused_retry")
+          return {
+            control,
+            succeeded: retry.ok ? 1 : 0,
+            failed: retry.ok ? 1 : 2,
+            abortFailed: !retry.ok,
+          }
+        }),
+      )
+      if (run.cancelled) return `Run ${run.id} is cancelling and cannot be resumed.`
+
+      const abortSucceeded = outcomes.reduce((count, outcome) => count + outcome.succeeded, 0)
+      const abortFailed = outcomes.reduce((count, outcome) => count + outcome.failed, 0)
+      const unconfirmed = outcomes.filter((outcome) => outcome.abortFailed)
+      if (unconfirmed.length > 0) {
+        for (const outcome of outcomes) {
+          const { control } = outcome
+          if (!outcome.abortFailed) control.pauseAbort = undefined
+          control.interrupt = outcome.abortFailed ? "resume" : "pause"
+          control.state = "paused"
+          control.row.status = "paused"
+        }
+        journal(run, {
+          type: "resume_blocked",
+          agents: controls.length,
+          abortSucceeded,
+          abortFailed,
+          agentsWithoutConfirmedAbort: unconfirmed.length,
+        })
+        writeStatus(run)
+        pushRunCard(run)
+        return `Run ${run.id} remains paused because ${unconfirmed.length} agent interruption(s) could not be confirmed. Abort requests: ${abortSucceeded} succeeded, ${abortFailed} failed. Call workflow_resume again to retry.`
+      }
+
+      run.status = "running"
+      run.pausedAt = undefined
+      for (const gate of run.pauseWaiters) gate.resolve()
+      run.pauseWaiters.clear()
+      for (const outcome of outcomes) {
+        const { control } = outcome
+        control.pauseAbort = undefined
+        control.interrupt = "resume"
+        control.state = "resuming"
+        control.row.status = "running"
+        control.gate?.resolve()
+        control.gate = undefined
+      }
+      journal(run, {
+        type: "resumed",
+        agents: controls.length,
+        abortSucceeded,
+        abortFailed,
+        agentsWithoutConfirmedAbort: 0,
+      })
+      writeStatus(run)
+      pushRunCard(run)
+      return `Resumed ${controls.length} paused agent(s) in ${run.id}. Abort requests: ${abortSucceeded} succeeded, ${abortFailed} failed.`
+    }
+    if (run.status !== "running") return `Run ${run.id} already ${run.status}; nothing to resume.`
+
+    const controls = [...run.activeAgents.values()].filter((control) => control.state === "active")
+    if (controls.length === 0) return `Run ${run.id} is running but has no active agents to interrupt.`
+    for (const control of controls) {
+      clearTimeout(control.timer)
+      control.timer = undefined
+      control.interrupt = "resume"
+      control.state = "resuming"
+      control.resumeAbort = abortAgent(run, control, "manual_resume")
+    }
+    const outcomes = await Promise.all(controls.map((control) => control.resumeAbort!))
+    if (run.cancelled) return `Run ${run.id} is cancelling and cannot be resumed.`
+    for (let index = 0; index < controls.length; index++) {
+      const control = controls[index]!
+      if (outcomes[index]!.ok) continue
+      control.resumeAbort = undefined
+      control.interrupt = null
+      control.state = "active"
+      if (run.activeAgents.get(control.sessionID) === control) resetAgentTimer(run, control)
+    }
+    const interrupted = outcomes.filter((outcome) => outcome.ok).length
+    const failed = outcomes.length - interrupted
+    journal(run, {
+      type: "manual_resume",
+      agents: controls.length,
+      interrupted,
+      abortFailed: failed,
+    })
+    writeStatus(run)
+    return `Manual resume for ${run.id}: ${interrupted} in-flight agent(s) interrupted for re-prompting, ${failed} abort(s) failed. Failed aborts kept their original request and a reset working-duration timer.`
+  }
+
+  async function runAgent(run: Run, semaphore: Semaphore, prompt: string, opts: AgentOpts = {}): Promise<any> {
     const startedAt = Date.now()
+    const label = opts.label ?? (typeof prompt === "string" ? prompt.replace(/\s+/g, " ").slice(0, 60) : "agent")
+    let phase: PhaseState | null = null
     let sessionID: string | undefined
     let row: AgentRow | null = null
-    const modelLabel = `${parseModelSlug(opts.model!).modelID}${opts.variant ? ` (${opts.variant})` : ""}`
+    let control: AgentControl | undefined
+    let release: (() => void) | undefined
     try {
-      if (run.cancelled) throw new Error("workflow was cancelled")
-      // "toplevel" makes children visible in UIs that hide parented sessions.
+      if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
+      if (typeof prompt !== "string" || prompt.trim() === "") {
+        throw new Error("agent(prompt) requires a non-empty string prompt")
+      }
+      phase = resolvePhase(run, opts)
+      if (cfg.models.length > 0) {
+        if (!opts.model) {
+          const profiles = cfg.models.map((profile) => `${profile.slug} (${profile.variant})`).join(", ")
+          throw new Error(`agent("${prompt.slice(0, 40)}...") is missing opts.model; choose from: ${profiles}`)
+        }
+        if (!opts.variant) throw new Error(`agent("${prompt.slice(0, 40)}...") is missing opts.variant`)
+        const configuredProfile = cfg.models.some(
+          (profile) => profile.slug === opts.model && profile.variant === opts.variant,
+        )
+        if (!configuredProfile) {
+          const profiles = cfg.models.map((profile) => `${profile.slug} (${profile.variant})`).join(", ")
+          throw new Error(`model profile "${opts.model} (${opts.variant})" is not configured; choose from: ${profiles}`)
+        }
+      } else if (opts.model || opts.variant) {
+        throw new Error("no model profiles are configured; omit opts.model and opts.variant to use the session default")
+      }
+      if (opts.variant && opts.model) {
+        const known = variantsBySlug.get(opts.model)
+        if (known && !known.includes(opts.variant)) {
+          throw new Error(`variant "${opts.variant}" is not supported by ${opts.model}; supported: ${known.join(", ")}`)
+        }
+      }
+      const model = opts.model ? parseModelSlug(opts.model) : undefined
+      const modelLabel = model ? `${model.modelID} (${opts.variant})` : "session default"
+
+      if (run.agentsSpawned >= cfg.maxAgentsPerRun) {
+        throw new Error(`agent cap reached (${cfg.maxAgentsPerRun} per run)`)
+      }
+      run.agentsSpawned++
+      writeStatus(run)
+      await waitWhilePaused(run)
+      for (;;) {
+        release = await semaphore.acquire()
+        if (run.status !== "paused") break
+        release()
+        release = undefined
+        await waitWhilePaused(run)
+      }
+      if (run.cancelled) {
+        release()
+        throw new WorkflowCancelledError("workflow was cancelled")
+      }
       const session = unwrap(
         await client.session.create({
           body: {
-            ...(cfg.childSessions === "nested" ? { parentID: run.callerSessionID } : {}),
+            parentID: run.callerSessionID,
             title: `${run.id} ${label}`,
             metadata: {
               background: true,
@@ -628,104 +1069,147 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         model: modelLabel,
         status: "running",
         sessionID,
-        step: step?.title,
+        phase: phase?.title,
       }
       run.agentRows.push(row)
-      if (step) {
-        step.started++
-        if (modelLabel && !step.models.includes(modelLabel)) step.models.push(modelLabel)
+      if (phase) {
+        phase.started++
+        if (!phase.models.includes(modelLabel)) phase.models.push(modelLabel)
+      }
+      control = {
+        sessionID,
+        label,
+        row,
+        release,
+        state: "active",
+        interrupt: null,
+      }
+      run.activeAgents.set(sessionID, control)
+      if (run.status === "paused") {
+        control.state = "paused"
+        control.row.status = "paused"
+        control.gate = deferred()
+        control.release?.()
+        control.release = undefined
       }
       pushRunCard(run)
 
-      let text = opts.schema
-        ? `${prompt}\n\nOUTPUT FORMAT (mandatory): reply with ONLY a single JSON value that validates against this JSON Schema — no prose, no markdown fences, no explanation:\n${safeStringify(opts.schema, 2)}`
-        : prompt
-
-      for (let attempt = 0; ; attempt++) {
-        const abortChild = async () => {
-          await client.session.abort({ path: { id: sessionID! } })
+      let text = prompt
+      for (;;) {
+        if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
+        if (run.status === "paused" || control.state === "paused") {
+          control.gate ??= deferred()
+          await control.gate.promise
+          if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
         }
-        const res = unwrap(
-          await withTimeout(
-            client.session.prompt({
+        if (!control.release) {
+          control.release = await semaphore.acquire()
+          if (run.cancelled) {
+            control.release()
+            control.release = undefined
+            throw new WorkflowCancelledError("workflow was cancelled")
+          }
+          if (run.status === "paused" || control.state === "paused") {
+            control.release()
+            control.release = undefined
+            control.state = "paused"
+            control.row.status = "paused"
+            control.gate ??= deferred()
+            continue
+          }
+        }
+        control.state = "active"
+        control.row.status = "running"
+        control.interrupt = null
+        resetAgentTimer(run, control)
+
+        let res: any
+        try {
+          res = unwrap(
+            await (client.session.prompt({
               path: { id: sessionID },
               query: { directory: run.directory },
               body: {
                 parts: [{ type: "text", text }],
                 ...(model ? { model } : {}),
                 ...(opts.variant ? { variant: opts.variant } : {}),
-                ...(opts.system ? { system: opts.system } : {}),
+                system: opts.system ? `${opts.system}\n\n${CHILD_SYSTEM}` : CHILD_SYSTEM,
+                ...(opts.schema
+                  ? {
+                      format: {
+                        type: "json_schema",
+                        schema: opts.schema,
+                        retryCount: 2,
+                      },
+                    }
+                  : {}),
                 tools: {
                   task: false,
                   workflow_run: false,
                   workflow_status: false,
                   workflow_cancel: false,
+                  workflow_resume: false,
                 },
               },
-            }) as Promise<any>,
-            timeoutMs,
-            `agent "${label}"`,
-            abortChild,
-          ),
-          "session.prompt",
-        )
-        if (run.cancelled) throw new Error("workflow was cancelled")
-        const reply = extractText(res?.parts)
-
-        if (!opts.schema) {
-          run.agentsCompleted++
-          journal(run, {
-            type: "agent",
-            label,
-            sessionID,
-            model: opts.model ?? null,
-            variant: opts.variant ?? null,
-            durationMs: Date.now() - startedAt,
-            prompt,
-            result: reply,
-          })
-          writeStatus(run)
-          if (step) step.finished++
-          if (row) row.status = "completed"
-          pushRunCard(run)
-          return reply
-        }
-
-        const parsed = parseJsonReply(reply)
-        const errors = parsed.ok ? schemaErrors(parsed.value, opts.schema) : [parsed.error]
-        if (parsed.ok && errors.length === 0) {
-          run.agentsCompleted++
-          journal(run, {
-            type: "agent",
-            label,
-            sessionID,
-            model: opts.model ?? null,
-            variant: opts.variant ?? null,
-            durationMs: Date.now() - startedAt,
-            prompt,
-            result: parsed.value,
-          })
-          writeStatus(run)
-          if (step) step.finished++
-          if (row) row.status = "completed"
-          pushRunCard(run)
-          return parsed.value
-        }
-        if (attempt >= retries) {
-          throw new Error(
-            `agent "${label}" reply failed schema validation after ${attempt + 1} attempts: ${errors.join("; ").slice(0, 500)}. Last reply: ${reply.slice(0, 500)}`,
+            } as any) as Promise<any>),
+            "session.prompt",
           )
+        } catch (error) {
+          clearTimeout(control.timer)
+          control.timer = undefined
+          if (run.cancelled || control.interrupt === "cancel") {
+            throw new WorkflowCancelledError("workflow was cancelled")
+          }
+          if (run.status === "paused" || control.interrupt === "pause" || control.interrupt === "resume") {
+            if (control.interrupt === "resume" && control.resumeAbort) {
+              const outcome = await awaitResumeAbort(control)
+              if (!outcome?.ok) throw error
+            }
+            text = "Continue where you left off. Complete the original task and return the requested result."
+            continue
+          }
+          throw error
         }
+        clearTimeout(control.timer)
+        control.timer = undefined
+
+        if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
+        if (run.status === "paused" || control.interrupt === "pause") {
+          text = "Continue where you left off. Complete the original task and return the requested result."
+          continue
+        }
+        if (control.interrupt === "resume") {
+          const outcome = await awaitResumeAbort(control)
+          if (outcome?.ok) {
+            text = "Continue where you left off. Complete the original task and return the requested result."
+            continue
+          }
+        }
+        const responseError = res?.info?.error
+        if (responseError) throw new Error(`agent response failed: ${safeStringify(responseError).slice(0, 500)}`)
+        const result = opts.schema ? res?.info?.structured : extractText(res?.parts)
+        if (opts.schema && result === undefined) {
+          throw new Error(`agent "${label}" returned no structured output`)
+        }
+        run.agentsCompleted++
         journal(run, {
-          type: "schema_retry",
+          type: "agent",
           label,
           sessionID,
-          attempt: attempt + 1,
-          errors,
+          model: opts.model ?? null,
+          variant: opts.variant ?? null,
+          durationMs: Date.now() - startedAt,
+          prompt,
+          result,
         })
-        text = `Your previous reply did not satisfy the required JSON Schema. Problems: ${errors.join("; ")}. Reply again with ONLY the corrected JSON value — no prose, no fences.`
+        if (phase) phase.finished++
+        row.status = "completed"
+        writeStatus(run)
+        pushRunCard(run)
+        return result
       }
     } catch (e: any) {
+      if (e instanceof WorkflowCancelledError) throw e
       run.agentsFailed++
       journal(run, {
         type: "agent_error",
@@ -735,14 +1219,17 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         prompt,
         error: String(e?.message ?? e),
       })
-      writeStatus(run)
-      if (step && sessionID) step.failed++
+      if (phase && row) phase.failed++
       if (row) row.status = "error"
+      writeStatus(run)
       pushRunCard(run)
-      throw e
+      return null
     } finally {
+      clearTimeout(control?.timer)
+      control?.release?.()
+      if (!control) release?.()
+      if (sessionID) run.activeAgents.delete(sessionID)
       if (sessionID) run.activeSessions.delete(sessionID)
-      release()
     }
   }
 
@@ -764,6 +1251,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           try {
             return await thunk()
           } catch (e: any) {
+            if (e instanceof WorkflowCancelledError) throw e
             journal(run, {
               type: "parallel_error",
               index,
@@ -783,7 +1271,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           for (const stage of stages) {
             try {
               value = await stage(value, item, index)
+              if (value === null) return null
             } catch (e: any) {
+              if (e instanceof WorkflowCancelledError) throw e
               journal(run, {
                 type: "pipeline_error",
                 index,
@@ -804,10 +1294,10 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       writeStatus(run)
     }
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)))
-    const step = (title: any) => {
-      run.currentStep = title == null ? null : String(title)
+    const phase = (title: any) => {
+      run.currentPhase = title == null ? null : String(title)
     }
-    return { agent, parallel, pipeline, log, sleep, step }
+    return { agent, parallel, pipeline, log, sleep, phase }
   }
 
   // -------------------------------------------------------------------------
@@ -861,14 +1351,14 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     return `${header}\nError: ${run.error ?? "unknown"}\n${artifacts}\nThis is an automated failure notification from the workflow plugin, not a user message. Inspect the journal if needed, tell the user what happened, and decide whether to retry with a corrected script.`
   }
 
-  async function executeRun(run: Run, script: string, input: any) {
-    const { agent, parallel, pipeline, log, sleep, step } = makePrimitives(run)
+  async function executeRun(run: Run, script: string, args: any) {
+    const { agent, parallel, pipeline, log, sleep, phase } = makePrimitives(run)
     try {
-      // Materialize the plan as a single workflow card (all steps pending)
+      // Materialize the plan as a single workflow card (all phases pending)
       // before any work starts.
       await pushRunCard(run)
       const fn = new AsyncFunction(...SCRIPT_PARAMS, script)
-      const result = await fn(agent, parallel, pipeline, log, sleep, input, run.id, step)
+      const result = await fn(agent, parallel, pipeline, log, sleep, args, run.id, phase)
       run.status = run.cancelled ? "cancelled" : "completed"
       run.result = result
       try {
@@ -897,7 +1387,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
   function listRunsFromDisk(): any[] {
     let entries: string[] = []
     try {
-      entries = fs.readdirSync(cfg.dataDir).filter((name) => name.startsWith("workflow_") || name.startsWith("wf_"))
+      entries = fs
+        .readdirSync(cfg.dataDir)
+        .filter((name: string) => name.startsWith("workflow_") || name.startsWith("wf_"))
     } catch {
       return []
     }
@@ -905,7 +1397,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       .map((name) => readJsonIfExists(path.join(cfg.dataDir, name, "status.json")))
       .filter(Boolean)
     for (const status of statuses) {
-      if (status.status === "running" && !liveRuns.has(status.runId)) {
+      if ((status.status === "running" || status.status === "paused") && !liveRuns.has(status.runId)) {
         status.status = "interrupted"
       }
     }
@@ -920,6 +1412,16 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
   function cancelRun(run: Run, reason: string): number {
     run.cancelled = true
     const aborting = [...run.activeSessions]
+    for (const control of run.activeAgents.values()) {
+      clearTimeout(control.timer)
+      control.timer = undefined
+      control.interrupt = "cancel"
+      control.release?.()
+      control.release = undefined
+      control.gate?.resolve()
+    }
+    for (const gate of run.pauseWaiters) gate.resolve()
+    run.pauseWaiters.clear()
     for (const id of aborting) {
       ;(client.session.abort({ path: { id } }) as Promise<any>).catch(() => {})
     }
@@ -941,7 +1443,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       const wf = part?.state?.metadata?.workflow
       if (!wf?.cancelRequested || !wf.runId) return
       const run = liveRuns.get(wf.runId)
-      if (!run || run.status !== "running" || run.cancelled) return
+      if (!run || (run.status !== "running" && run.status !== "paused") || run.cancelled) return
       cancelRun(run, "ui cancel button")
     },
     config: async (opencodeConfig: any) => {
@@ -957,10 +1459,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         agent.permission = denyTask(agent.permission)
       }
     },
-    "experimental.chat.system.transform": async (
-      input: { sessionID?: string },
-      output: { system: string[] },
-    ) => {
+    "experimental.chat.system.transform": async (input: { sessionID?: string }, output: { system: string[] }) => {
       const isWorkflowChild = [...liveRuns.values()].some(
         (run) => input.sessionID && run.activeSessions.has(input.sessionID),
       )
@@ -987,48 +1486,49 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         args: {
           script: tool.schema
             .string()
+            .optional()
             .describe(
-              "The workflow script: plain JavaScript forming the body of an async function, using the injected primitives (agent/parallel/pipeline/log/sleep/input/runId). Return the final result.",
+              "Inline workflow script beginning with `export const meta = {...}` and using agent/parallel/pipeline/log/sleep/args/runId/phase. Provide exactly one of script or scriptPath.",
             ),
-          name: tool.schema
+          scriptPath: tool.schema
             .string()
             .optional()
-            .describe("Short kebab-case name for this run, e.g. 'review-auth-changes'."),
-          input: tool.schema
+            .describe(
+              "Path to a workflow script to rerun. Relative paths resolve from the current project directory. The file is read fresh and copied into this run's artifact directory. Provide exactly one of script or scriptPath.",
+            ),
+          args: tool.schema
             .any()
             .optional()
             .describe(
-              "Optional JSON value exposed to the script as `input`. Pass real arrays/objects, not JSON-encoded strings.",
-            ),
-          steps: tool.schema
-            .array(
-              tool.schema.union([
-                tool.schema.string(),
-                tool.schema.object({
-                  title: tool.schema.string().describe("Step title; agents reference it via opts.step / step()"),
-                  detail: tool.schema.string().optional().describe("One-line description of what the step does"),
-                  model: tool.schema
-                    .string()
-                    .optional()
-                    .describe("Model slug the step's agents will use — shown on the step card before it runs"),
-                  variant: tool.schema.string().optional().describe("Reasoning-effort variant planned for the step"),
-                }),
-              ]),
-            )
-            .optional()
-            .describe(
-              "Ordered plan of 2-8 coarse steps, shown to the user as progress cards (pending → running → done). Always declare these; attribute agents with opts.step or step(). See STEPS in the main description.",
+              "Optional JSON value exposed to the script as `args`. Pass real arrays/objects, not JSON-encoded strings.",
             ),
         },
-        async execute(args, context) {
+        async execute(toolArgs, context) {
+          if ((toolArgs.script === undefined) === (toolArgs.scriptPath === undefined)) {
+            return "Workflow was not started: provide exactly one of script or scriptPath."
+          }
+          let source: string
           try {
-            new AsyncFunction(...SCRIPT_PARAMS, args.script)
+            if (toolArgs.scriptPath !== undefined) {
+              const sourcePath = path.resolve(context.directory, toolArgs.scriptPath)
+              source = fs.readFileSync(sourcePath, "utf8")
+            } else {
+              source = toolArgs.script!
+            }
           } catch (e: any) {
-            return `Script failed to compile — nothing was started. ${String(e?.message ?? e)}\nFix the script and call workflow_run again. Remember: plain JavaScript function body, no imports, no TypeScript syntax, no 'export'.`
+            return `Workflow was not started: could not read scriptPath. ${String(e?.message ?? e)}`
+          }
+
+          let parsed: { meta: WorkflowMeta; executable: string }
+          try {
+            parsed = parseScript(source)
+            new AsyncFunction(...SCRIPT_PARAMS, parsed.executable)
+          } catch (e: any) {
+            return `Script failed to compile - nothing was started. ${String(e?.message ?? e)}\nFix the script and call workflow_run again. It must begin with a pure literal export const meta = {...}, followed by plain JavaScript with no imports or TypeScript syntax.`
           }
           const run: Run = {
             id: newRunId(),
-            name: args.name ?? "workflow",
+            name: parsed.meta.name.trim(),
             status: "running",
             callerSessionID: context.sessionID,
             directory: context.directory,
@@ -1040,8 +1540,10 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             logs: [],
             cancelled: false,
             activeSessions: new Set(),
-            steps: null,
-            currentStep: null,
+            activeAgents: new Map(),
+            pauseWaiters: new Set(),
+            phases: null,
+            currentPhase: null,
             agentRows: [],
             card: null,
             cardQueue: Promise.resolve(),
@@ -1050,49 +1552,42 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           for (let n = 2; fs.existsSync(path.join(cfg.dataDir, run.id)) || liveRuns.has(run.id); n++) {
             run.id = `${newRunId()}_${n}`
           }
-          const declaredSteps = (args.steps ?? [])
-            .map((s: any) => (typeof s === "string" ? { title: s } : s))
-            .filter((s: any) => s && typeof s.title === "string" && s.title.trim() !== "")
-          if (declaredSteps.length > 0) {
-            run.steps = declaredSteps.map((s: any) => {
-              const trimmed = s.title.trim()
-              const declaredModel =
-                typeof s.model === "string" && s.model
-                  ? `${s.model.includes("/") ? s.model.slice(s.model.indexOf("/") + 1) : s.model}${typeof s.variant === "string" && s.variant ? ` (${s.variant})` : ""}`
-                  : undefined
+          if (parsed.meta.phases && parsed.meta.phases.length > 0) {
+            run.phases = parsed.meta.phases.map((declaredPhase) => {
+              const trimmed = declaredPhase.title.trim()
               return {
                 title: `${trimmed[0]!.toUpperCase()}${trimmed.slice(1)}`,
-                detail: typeof s.detail === "string" ? s.detail : undefined,
+                detail: declaredPhase.detail,
                 started: 0,
                 finished: 0,
                 failed: 0,
-                declaredModel,
                 models: [],
               }
             })
           }
           run.dir = path.join(cfg.dataDir, run.id)
           fs.mkdirSync(run.dir, { recursive: true })
-          fs.writeFileSync(path.join(run.dir, "script.js"), args.script)
-          if (args.input !== undefined) {
-            fs.writeFileSync(path.join(run.dir, "input.json"), safeStringify(args.input, 2))
+          fs.writeFileSync(path.join(run.dir, "script.js"), source)
+          if (toolArgs.args !== undefined) {
+            fs.writeFileSync(path.join(run.dir, "args.json"), safeStringify(toolArgs.args, 2))
           }
           liveRuns.set(run.id, run)
           writeStatus(run)
           journal(run, {
             type: "started",
             name: run.name,
+            description: parsed.meta.description,
             callerSessionID: run.callerSessionID,
           })
 
-          void executeRun(run, args.script, args.input).catch((e) => {
+          void executeRun(run, parsed.executable, toolArgs.args).catch((e) => {
             console.error(`[workflow plugin] run ${run.id} crashed: ${e}`)
           })
 
           return [
             `Workflow ${run.id} ("${run.name}") started in the background.`,
             `A completion message with the result will be injected into this session when it finishes — do NOT wait, poll, or sleep; finish your turn normally.`,
-            `Progress on demand: workflow_status({ runId: "${run.id}" }). Cancel: workflow_cancel({ runId: "${run.id}" }).`,
+            `Progress on demand: workflow_status({ runId: "${run.id}" }). Resume or interrupt: workflow_resume({ runId: "${run.id}" }). Cancel: workflow_cancel({ runId: "${run.id}" }).`,
             `Artifacts (script.js, journal, status, result): ${run.dir}`,
           ].join("\n")
         },
@@ -1119,9 +1614,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             ? statusSnapshot(live)
             : readJsonIfExists(path.join(cfg.dataDir, args.runId, "status.json"))
           if (!status) return `No run found with id ${args.runId}.`
-          if (!live && status.status === "running") {
+          if (!live && (status.status === "running" || status.status === "paused")) {
             status.status = "interrupted"
-            status.note = "The opencode server restarted while this run was in flight; it will never complete."
+            status.note = "The opencode server restarted while this run was in flight; it cannot be resumed."
           }
           const lines = [safeStringify({ ...status, logs: undefined }, 2)]
           const logs = (status.logs ?? []).slice(-20)
@@ -1149,9 +1644,25 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             if (!status) return `No run found with id ${args.runId}.`
             return `Run ${args.runId} is not live (status on disk: ${status.status}) — nothing to cancel.`
           }
-          if (run.status !== "running") return `Run ${args.runId} already ${run.status}.`
+          if (run.status !== "running" && run.status !== "paused") return `Run ${args.runId} already ${run.status}.`
           const aborted = cancelRun(run, "workflow_cancel tool")
           return `Cancellation requested for ${args.runId}: ${aborted} in-flight agent(s) aborted, no new agents will start. The run will settle as "cancelled" shortly (check workflow_status).`
+        },
+      }),
+
+      workflow_resume: tool({
+        description: `Manually recover a live workflow. For a paused run, continues every paused agent in the same child session and resets the ${cfg.agentTimeoutMs}ms working-duration guard after every interruption is confirmed; failed interruption attempts leave the run paused so resume can be retried safely. For a running run, interrupts every in-flight request and re-prompts those same sessions. Safe to call repeatedly. Runs cannot be resumed after an opencode server restart.`,
+        args: {
+          runId: tool.schema.string().describe("Live run id (workflow_...) to resume or interrupt."),
+        },
+        async execute(args) {
+          const run = liveRuns.get(args.runId)
+          if (!run) {
+            const status = readJsonIfExists(path.join(cfg.dataDir, args.runId, "status.json"))
+            if (!status) return `No run found with id ${args.runId}.`
+            return `Run ${args.runId} is not live (status on disk: ${status.status}) and cannot be resumed.`
+          }
+          return resumeRun(run)
         },
       }),
     },

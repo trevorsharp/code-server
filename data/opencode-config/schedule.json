@@ -1,6 +1,8 @@
 {
   "enabled": true,
   "triggerModel": "openai/gpt-5.6-luna",
+  "triggerVariant": "high",
   "workModel": "openai/gpt-5.6-sol",
+  "workVariant": "high",
   "dataDir": "/home/sharp/.local/share/opencode/scheduled-jobs"
 }

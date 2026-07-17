@@ -6,7 +6,9 @@ import { tool, type Plugin } from "@opencode-ai/plugin";
 type ScheduleConfig = {
   enabled: boolean;
   triggerModel: string;
+  triggerVariant: string;
   workModel: string;
+  workVariant: string;
   dataDir: string;
 };
 
@@ -30,6 +32,7 @@ type Job = {
     sessionID: string;
     label: string;
     model: string;
+    variant?: string;
     status: "running" | "completed" | "error";
   }>;
 };
@@ -55,7 +58,9 @@ type CronSpec = {
 const DEFAULT_CONFIG: ScheduleConfig = {
   enabled: true,
   triggerModel: "openai/gpt-5.6-luna",
+  triggerVariant: "high",
   workModel: "openai/gpt-5.6-sol",
+  workVariant: "high",
   dataDir: path.join(
     os.homedir(),
     ".local",
@@ -344,6 +349,7 @@ export const SchedulePlugin: Plugin = async ({
             sessionID: job.triggerSessionID,
             label: "Trigger",
             model: config.triggerModel,
+            variant: config.triggerVariant,
             status: triggerRunning ? "running" : "completed",
           },
         ]
@@ -456,6 +462,7 @@ export const SchedulePlugin: Plugin = async ({
     sessionID: string,
     text: string,
     model: string,
+    variant: string,
     timeoutMs: number,
     allowCancel = false,
   ): Promise<string> {
@@ -466,6 +473,7 @@ export const SchedulePlugin: Plugin = async ({
           query: { directory: job.directory },
           body: {
             model: parseModel(model),
+            variant,
             parts: [{ type: "text", text }],
             tools: {
               schedule_create: false,
@@ -534,6 +542,7 @@ export const SchedulePlugin: Plugin = async ({
           sessionID,
           message,
           config.triggerModel,
+          config.triggerVariant,
           TRIGGER_TIMEOUT_MS,
         );
         const verdict = parseVerdict(response);
@@ -562,6 +571,7 @@ export const SchedulePlugin: Plugin = async ({
       sessionID,
       label: `Work run ${job.workRunCount}`,
       model: config.workModel,
+      variant: config.workVariant,
       status: "running" as "running" | "completed" | "error",
     };
     job.workSessions = [...(job.workSessions ?? []), row].slice(-5);
@@ -574,6 +584,7 @@ export const SchedulePlugin: Plugin = async ({
         sessionID,
         `You are running as part of a scheduled job. Another agent has decided to escalate to you to perform a one-off task described below. You should not track context in files (unless explicitly asked). Run any required checks and re-validate any conclusions provided as context below. Do not ask the user questions as this is running in a background session. If you determine the job's end condition has been met, call \`schedule_cancel\` with jobId \`${job.id}\`.\n\nEscalation reason: "${verdict.reason}"\nContext: "${verdict.context}"\n\nYour task:\n${job.workPrompt}`,
         config.workModel,
+        config.workVariant,
         WORK_TIMEOUT_MS,
         true,
       );
