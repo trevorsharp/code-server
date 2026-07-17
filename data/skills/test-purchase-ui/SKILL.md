@@ -5,14 +5,14 @@ description: Stage TEST purchases from PB Redux blueprints, log test users into 
 
 # Test Purchase UI
 
-Executable: `~/.config/opencode/skills/test-purchase-ui/purchase-ui.ts`
+Executable: [`purchase-ui.ts`](./purchase-ui.ts). Resolve the linked file relative to this skill before running it.
 
 ## Stage A Blueprint
 
 Use the user-provided blueprint ID unchanged:
 
 ```bash
-~/.config/opencode/skills/test-purchase-ui/purchase-ui.ts stage --blueprint-id <id>
+purchase-ui.ts stage --blueprint-id <id>
 ```
 
 The command fetches the blueprint, runs its requirements gate, executes the workflow once, and returns `customerId`, optional `purchaseId`, and `requestId`.
@@ -24,8 +24,8 @@ The command fetches the blueprint, runs its requirements gate, executes the work
 3. Run one of:
 
 ```bash
-~/.config/opencode/skills/test-purchase-ui/purchase-ui.ts login --customer-id <id> --host local --browser-instance <session-id>
-~/.config/opencode/skills/test-purchase-ui/purchase-ui.ts login --customer-id <id> --host testazure --browser-instance <session-id>
+purchase-ui.ts login --customer-id <id> --host local --browser-instance <session-id>
+purchase-ui.ts login --customer-id <id> --host testazure --browser-instance <session-id>
 ```
 
 `local` navigates to `http://localhost:3001/purchase/`. `testazure` navigates to `https://testazure.carvana.com/purchase`. Continue browser work through Chrome DevTools MCP after login.
@@ -37,7 +37,7 @@ Open `https://testazure.carvana.com/purchase` in the MCP browser. Preflight the 
 CheckoutUI:
 
 ```bash
-~/.config/opencode/skills/test-purchase-ui/purchase-ui.ts preflight-feature --component checkout --artifact-key <published-key>
+purchase-ui.ts preflight-feature --component checkout --artifact-key <published-key>
 ```
 
 Run with Chrome DevTools MCP `evaluate_script`:
@@ -53,7 +53,7 @@ Run with Chrome DevTools MCP `evaluate_script`:
 VerificationsUI:
 
 ```bash
-~/.config/opencode/skills/test-purchase-ui/purchase-ui.ts preflight-feature --component verifx --branch '<branch>'
+purchase-ui.ts preflight-feature --component verifx --branch '<branch>'
 ```
 
 Run with Chrome DevTools MCP `evaluate_script`:
