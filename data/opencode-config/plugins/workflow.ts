@@ -70,46 +70,26 @@ type PhaseState = {
 type AgentRow = {
   label: string
   model?: string
-  status: "running" | "paused" | "completed" | "error"
+  status: "running" | "completed" | "error"
   sessionID?: string
   phase?: string
 }
 
-type Deferred = {
-  promise: Promise<void>
-  resolve: () => void
-}
-
-type AbortOutcome =
-  | { ok: true }
-  | {
-      ok: false
-      error: string
-    }
-
 type AgentControl = {
-  sessionID: string
-  label: string
-  row: AgentRow
   release?: () => void
   timer?: ReturnType<typeof setTimeout>
-  gate?: Deferred
-  pauseAbort?: Promise<AbortOutcome>
-  resumeAbort?: Promise<AbortOutcome>
-  state: "active" | "paused" | "resuming"
-  interrupt: "pause" | "resume" | "cancel" | null
+  timedOut: boolean
 }
 
 type Run = {
   id: string
   name: string
-  status: "running" | "paused" | "completed" | "failed" | "cancelled"
+  status: "running" | "completed" | "failed" | "cancelled"
   callerSessionID: string
   directory: string
   dir: string
   startedAt: number
   finishedAt?: number
-  pausedAt?: number
   agentsSpawned: number
   agentsCompleted: number
   agentsFailed: number
@@ -119,7 +99,6 @@ type Run = {
   cancelled: boolean
   activeSessions: Set<string>
   activeAgents: Map<string, AgentControl>
-  pauseWaiters: Set<Deferred>
   phases: PhaseState[] | null
   currentPhase: string | null
   agentRows: AgentRow[]
@@ -232,14 +211,6 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Pr
   } finally {
     clearTimeout(timer)
   }
-}
-
-function deferred(): Deferred {
-  let resolve!: () => void
-  const promise = new Promise<void>((done) => {
-    resolve = done
-  })
-  return { promise, resolve }
 }
 
 function parseScript(script: string): {
@@ -434,7 +405,6 @@ function statusSnapshot(run: Run) {
     callerSessionID: run.callerSessionID,
     directory: run.directory,
     startedAt: new Date(run.startedAt).toISOString(),
-    pausedAt: run.pausedAt ? new Date(run.pausedAt).toISOString() : null,
     finishedAt: run.finishedAt ? new Date(run.finishedAt).toISOString() : null,
     durationMs: (run.finishedAt ?? Date.now()) - run.startedAt,
     agentsSpawned: run.agentsSpawned,
@@ -449,7 +419,6 @@ function statusSnapshot(run: Run) {
         }))
       : undefined,
     agents: run.agentRows,
-    ...(run.status === "paused" ? { hint: `Call workflow_resume({ runId: "${run.id}" }) to continue.` } : {}),
     scriptPath: path.join(run.dir, "script.js"),
     logs: run.logs.slice(-100),
     error: run.error ?? null,
@@ -494,7 +463,7 @@ function modelSection(cfg: WorkflowConfig, variantsBySlug: Map<string, string[]>
 function runDescription(cfg: WorkflowConfig, variantsBySlug: Map<string, string[]>): string {
   return `Run a model-neutral multi-agent orchestration script in the background. Use workflow_run whenever delegation helps, including a one-off agent. It is especially useful for parallel research, reviews with adversarial verification, migrations, audits, broad sweeps, and comparing independent attempts. No user opt-in is required.
 
-HOW IT RUNS: workflow_run returns IMMEDIATELY with a run id. The script continues in the server; completion or failure injects a synthetic message into this session. Finish your turn normally after starting it. Do not wait, poll, or sleep; use workflow_status only for an explicit progress request. A child's final output is raw workflow return data, not a user-facing response. You must synthesize the workflow result for the user. Runs and manual resume state do not survive an opencode server restart.
+HOW IT RUNS: workflow_run returns IMMEDIATELY with a run id. The script continues in the server; completion or failure injects a synthetic message into this session. Finish your turn normally after starting it. Do not wait, poll, or sleep; use workflow_status only for an explicit progress request. A child's final output is raw workflow return data, not a user-facing response. You must synthesize the workflow result for the user. In-flight runs do not survive an opencode server restart.
 
 SCRIPT SOURCE: provide exactly one of \`script\` or \`scriptPath\`. A scriptPath is read fresh and copied into the new run's artifacts; this is iteration, not a saved-workflow registry. Inline scripts are also persisted as script.js. Every script must BEGIN exactly with a pure literal:
   export const meta = { name: "review-files", description: "Review files and verify findings", phases: [{ title: "Review" }, { title: "Verify", detail: "Refute candidate findings" }] }
@@ -545,7 +514,7 @@ QUALITY PATTERNS:
 
 SCALING: follow explicit wording first. "Quick" means a small proportional fan-out and minimal verification. "Thorough," "audit," "comprehensive," or "exhaustive" means broader dimensions, independent verification, and completeness checks. When wording is silent, scale by ambiguity, risk, and scope. Keep agent counts proportional; more agents without distinct work do not improve quality.
 
-LIMITS AND RECOVERY: at most ${cfg.maxConcurrency} agents work concurrently and ${cfg.maxAgentsPerRun} may be spawned. agent(), parallel(), and pipeline() preserve terminal agent failures as null. Always inspect journal.jsonl before speculating about empty or surprising results. Every full prompt, result, failure, pause, and transition is journaled. There is no automatic network retry. If any agent reaches ${cfg.agentTimeoutMs}ms of working time, the entire run pauses, all active requests are aborted, slots are released, and the caller is not notified. workflow_resume resumes every paused child in the same session with reset timers only after every interruption is confirmed; otherwise the run remains paused for another resume attempt. On a running run it explicitly interrupts and re-prompts all in-flight children. workflow_cancel ends running or paused work.
+LIMITS AND RECOVERY: at most ${cfg.maxConcurrency} agents work concurrently and ${cfg.maxAgentsPerRun} may be spawned. agent(), parallel(), and pipeline() preserve terminal agent failures as null. Always inspect journal.jsonl before speculating about empty or surprising results. Every full prompt, result, failure, and transition is journaled. There is no automatic network retry. An agent request that reaches ${cfg.agentTimeoutMs}ms is aborted and settles as null; other agents continue. workflow_cancel ends a running workflow.
 
 ${modelSection(cfg, variantsBySlug)}
 
@@ -609,9 +578,9 @@ COMPOSED EXHAUSTIVE-REVIEW EXAMPLE: pass files, dimensions, sweep prompts, and a
   return { confirmed, seen: seen.size }`
 }
 
-const STATUS_DESCRIPTION = `Check background workflows. Without runId, lists recent runs. With runId, returns phases, agents, pause state, recent logs, and a finished result or error. A paused live run clearly indicates workflow_resume. Running or paused disk state without a live run is "interrupted" after server restart and cannot be resumed. Do not poll; completed workflows announce themselves.`
+const STATUS_DESCRIPTION = `Check background workflows. Without runId, lists recent runs. With runId, returns phases, agents, recent logs, and a finished result or error. Running disk state without a live run is "interrupted" after server restart. Do not poll; completed workflows announce themselves.`
 
-const CANCEL_DESCRIPTION = `Cancel a running or paused workflow. Aborts in-flight child sessions, settles paused agents, and stops new agents. Completed work remains in the journal.`
+const CANCEL_DESCRIPTION = `Cancel a running workflow. Aborts in-flight child sessions and stops new agents. Completed work remains in the journal.`
 
 // ---------------------------------------------------------------------------
 // Plugin
@@ -716,7 +685,6 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       if (!final) return "pending"
       return run.status === "completed" ? "skipped" : "pending"
     }
-    if (run.agentRows.some((row) => row.phase === phase.title && row.status === "paused")) return "paused"
     const settled = phase.finished + phase.failed >= phase.started
     if (!settled) return final ? (run.status === "completed" ? "completed" : "error") : "running"
     return phase.failed > 0 && phase.finished === 0 ? "error" : "completed"
@@ -725,26 +693,17 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
   function runCardBody(run: Run, final = false) {
     // The fork's existing card payload calls phases "steps"; keep that wire key
     // while the workflow script API consistently uses phase terminology.
-    const paused = run.status === "paused"
-    const displayRow = (row: AgentRow) =>
-      paused && row.status === "paused" ? { ...row, label: `${row.label} [paused]` } : row
     const steps = run.phases?.map((phase) => {
       const status = phaseStatus(run, phase, final)
       return {
-        title: status === "paused" ? `${phase.title} [paused]` : phase.title,
+        title: phase.title,
         detail: phase.detail,
         status,
         model: phase.models.length > 0 ? phase.models.join(", ") : undefined,
-        agents: run.agentRows.filter((row) => row.phase === phase.title).map(displayRow),
+        agents: run.agentRows.filter((row) => row.phase === phase.title),
       }
     })
-    const status = paused
-      ? "pending"
-      : run.status === "running"
-        ? "running"
-        : run.status === "completed"
-          ? "completed"
-          : "error"
+    const status = run.status === "running" ? "running" : run.status === "completed" ? "completed" : "error"
     const summary = `${run.agentsCompleted} agent(s) completed${run.agentsFailed ? `, ${run.agentsFailed} failed` : ""}`
     return {
       tool: "workflow",
@@ -758,16 +717,10 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         uiOnly: true,
         workflow: {
           runId: run.id,
-          name: paused ? `${run.name} [paused]` : run.name,
+          name: run.name,
           status: run.status,
-          ...(run.pausedAt ? { pausedAt: new Date(run.pausedAt).toISOString() } : {}),
-          ...(run.status === "paused"
-            ? {
-                hint: `Call workflow_resume({ runId: "${run.id}" }) to continue.`,
-              }
-            : {}),
           ...(steps ? { steps } : {}),
-          agents: run.agentRows.filter((row) => !row.phase).map(displayRow),
+          agents: run.agentRows.filter((row) => !row.phase),
         },
       },
       ...(run.card ?? {}),
@@ -802,193 +755,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
   // -------------------------------------------------------------------------
 
   class WorkflowCancelledError extends Error {}
-
-  async function waitWhilePaused(run: Run) {
-    while (run.status === "paused" && !run.cancelled) {
-      const gate = deferred()
-      run.pauseWaiters.add(gate)
-      try {
-        await gate.promise
-      } finally {
-        run.pauseWaiters.delete(gate)
-      }
-    }
-    if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
-  }
-
-  async function abortAgent(run: Run, control: AgentControl, action: string): Promise<AbortOutcome> {
-    try {
-      unwrap(
-        await withTimeout(
-          client.session.abort({
-            path: { id: control.sessionID },
-          }) as Promise<any>,
-          15_000,
-          `session.abort for ${control.label}`,
-        ),
-        "session.abort",
-      )
-      return { ok: true }
-    } catch (e: any) {
-      const error = String(e?.message ?? e)
-      journal(run, {
-        type: "agent_abort_error",
-        action,
-        label: control.label,
-        sessionID: control.sessionID,
-        error,
-      })
-      return { ok: false, error }
-    }
-  }
-
-  async function awaitResumeAbort(control: AgentControl): Promise<AbortOutcome | undefined> {
-    const pending = control.resumeAbort
-    if (!pending) return undefined
-    const outcome = await pending
-    if (control.resumeAbort === pending) control.resumeAbort = undefined
-    return outcome
-  }
-
-  function resetAgentTimer(run: Run, control: AgentControl) {
-    clearTimeout(control.timer)
-    control.timer = undefined
-    if (run.status !== "running" || run.cancelled) return
-    control.timer = setTimeout(() => {
-      control.timer = undefined
-      pauseRun(run, { label: control.label, sessionID: control.sessionID })
-    }, cfg.agentTimeoutMs)
-  }
-
-  function pauseRun(run: Run, trigger: { label: string; sessionID: string }) {
-    if (run.status !== "running" || run.cancelled) return
-    run.status = "paused"
-    run.pausedAt = Date.now()
-    const controls = [...run.activeAgents.values()]
-    for (const control of controls) {
-      clearTimeout(control.timer)
-      control.timer = undefined
-      control.interrupt = "pause"
-      control.state = "paused"
-      control.row.status = "paused"
-      control.gate ??= deferred()
-      control.release?.()
-      control.release = undefined
-      control.pauseAbort = abortAgent(run, control, "pause")
-    }
-    journal(run, {
-      type: "paused",
-      trigger,
-      pausedAgents: controls.length,
-      reason: `agent reached the ${cfg.agentTimeoutMs}ms working-duration limit`,
-    })
-    writeStatus(run)
-    pushRunCard(run)
-  }
-
-  async function resumeRun(run: Run): Promise<string> {
-    if (run.cancelled) return `Run ${run.id} is cancelling and cannot be resumed.`
-    if (run.status === "paused") {
-      const controls = [...run.activeAgents.values()].filter(
-        (control) => control.state === "paused" || control.gate !== undefined,
-      )
-      const outcomes = await Promise.all(
-        controls.map(async (control) => {
-          if (!control.pauseAbort) {
-            return { control, succeeded: 0, failed: 0, abortFailed: false }
-          }
-          const initial = await control.pauseAbort
-          if (initial.ok) return { control, succeeded: 1, failed: 0, abortFailed: false }
-          const retry = await abortAgent(run, control, "resume_paused_retry")
-          return {
-            control,
-            succeeded: retry.ok ? 1 : 0,
-            failed: retry.ok ? 1 : 2,
-            abortFailed: !retry.ok,
-          }
-        }),
-      )
-      if (run.cancelled) return `Run ${run.id} is cancelling and cannot be resumed.`
-
-      const abortSucceeded = outcomes.reduce((count, outcome) => count + outcome.succeeded, 0)
-      const abortFailed = outcomes.reduce((count, outcome) => count + outcome.failed, 0)
-      const unconfirmed = outcomes.filter((outcome) => outcome.abortFailed)
-      if (unconfirmed.length > 0) {
-        for (const outcome of outcomes) {
-          const { control } = outcome
-          if (!outcome.abortFailed) control.pauseAbort = undefined
-          control.interrupt = outcome.abortFailed ? "resume" : "pause"
-          control.state = "paused"
-          control.row.status = "paused"
-        }
-        journal(run, {
-          type: "resume_blocked",
-          agents: controls.length,
-          abortSucceeded,
-          abortFailed,
-          agentsWithoutConfirmedAbort: unconfirmed.length,
-        })
-        writeStatus(run)
-        pushRunCard(run)
-        return `Run ${run.id} remains paused because ${unconfirmed.length} agent interruption(s) could not be confirmed. Abort requests: ${abortSucceeded} succeeded, ${abortFailed} failed. Call workflow_resume again to retry.`
-      }
-
-      run.status = "running"
-      run.pausedAt = undefined
-      for (const gate of run.pauseWaiters) gate.resolve()
-      run.pauseWaiters.clear()
-      for (const outcome of outcomes) {
-        const { control } = outcome
-        control.pauseAbort = undefined
-        control.interrupt = "resume"
-        control.state = "resuming"
-        control.row.status = "running"
-        control.gate?.resolve()
-        control.gate = undefined
-      }
-      journal(run, {
-        type: "resumed",
-        agents: controls.length,
-        abortSucceeded,
-        abortFailed,
-        agentsWithoutConfirmedAbort: 0,
-      })
-      writeStatus(run)
-      pushRunCard(run)
-      return `Resumed ${controls.length} paused agent(s) in ${run.id}. Abort requests: ${abortSucceeded} succeeded, ${abortFailed} failed.`
-    }
-    if (run.status !== "running") return `Run ${run.id} already ${run.status}; nothing to resume.`
-
-    const controls = [...run.activeAgents.values()].filter((control) => control.state === "active")
-    if (controls.length === 0) return `Run ${run.id} is running but has no active agents to interrupt.`
-    for (const control of controls) {
-      clearTimeout(control.timer)
-      control.timer = undefined
-      control.interrupt = "resume"
-      control.state = "resuming"
-      control.resumeAbort = abortAgent(run, control, "manual_resume")
-    }
-    const outcomes = await Promise.all(controls.map((control) => control.resumeAbort!))
-    if (run.cancelled) return `Run ${run.id} is cancelling and cannot be resumed.`
-    for (let index = 0; index < controls.length; index++) {
-      const control = controls[index]!
-      if (outcomes[index]!.ok) continue
-      control.resumeAbort = undefined
-      control.interrupt = null
-      control.state = "active"
-      if (run.activeAgents.get(control.sessionID) === control) resetAgentTimer(run, control)
-    }
-    const interrupted = outcomes.filter((outcome) => outcome.ok).length
-    const failed = outcomes.length - interrupted
-    journal(run, {
-      type: "manual_resume",
-      agents: controls.length,
-      interrupted,
-      abortFailed: failed,
-    })
-    writeStatus(run)
-    return `Manual resume for ${run.id}: ${interrupted} in-flight agent(s) interrupted for re-prompting, ${failed} abort(s) failed. Failed aborts kept their original request and a reset working-duration timer.`
-  }
+  class AgentTimeoutError extends Error {}
 
   async function runAgent(run: Run, semaphore: Semaphore, prompt: string, opts: AgentOpts = {}): Promise<any> {
     const startedAt = Date.now()
@@ -1034,14 +801,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       }
       run.agentsSpawned++
       writeStatus(run)
-      await waitWhilePaused(run)
-      for (;;) {
-        release = await semaphore.acquire()
-        if (run.status !== "paused") break
-        release()
-        release = undefined
-        await waitWhilePaused(run)
-      }
+      release = await semaphore.acquire()
       if (run.cancelled) {
         release()
         throw new WorkflowCancelledError("workflow was cancelled")
@@ -1076,138 +836,105 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         phase.started++
         if (!phase.models.includes(modelLabel)) phase.models.push(modelLabel)
       }
-      control = {
-        sessionID,
-        label,
-        row,
+      const agentControl: AgentControl = {
         release,
-        state: "active",
-        interrupt: null,
+        timedOut: false,
       }
-      run.activeAgents.set(sessionID, control)
-      if (run.status === "paused") {
-        control.state = "paused"
-        control.row.status = "paused"
-        control.gate = deferred()
-        control.release?.()
-        control.release = undefined
-      }
+      control = agentControl
+      run.activeAgents.set(sessionID, agentControl)
       pushRunCard(run)
 
-      let text = prompt
-      for (;;) {
-        if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
-        if (run.status === "paused" || control.state === "paused") {
-          control.gate ??= deferred()
-          await control.gate.promise
-          if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
-        }
-        if (!control.release) {
-          control.release = await semaphore.acquire()
-          if (run.cancelled) {
-            control.release()
-            control.release = undefined
-            throw new WorkflowCancelledError("workflow was cancelled")
-          }
-          if (run.status === "paused" || control.state === "paused") {
-            control.release()
-            control.release = undefined
-            control.state = "paused"
-            control.row.status = "paused"
-            control.gate ??= deferred()
-            continue
-          }
-        }
-        control.state = "active"
-        control.row.status = "running"
-        control.interrupt = null
-        resetAgentTimer(run, control)
-
-        let res: any
-        try {
-          res = unwrap(
-            await (client.session.prompt({
-              path: { id: sessionID },
-              query: { directory: run.directory },
-              body: {
-                parts: [{ type: "text", text }],
-                ...(model ? { model } : {}),
-                ...(opts.variant ? { variant: opts.variant } : {}),
-                system: opts.system ? `${opts.system}\n\n${CHILD_SYSTEM}` : CHILD_SYSTEM,
-                ...(opts.schema
-                  ? {
-                      format: {
-                        type: "json_schema",
-                        schema: opts.schema,
-                        retryCount: 2,
-                      },
-                    }
-                  : {}),
-                tools: {
-                  task: false,
-                  workflow_run: false,
-                  workflow_status: false,
-                  workflow_cancel: false,
-                  workflow_resume: false,
-                },
-              },
-            } as any) as Promise<any>),
-            "session.prompt",
-          )
-        } catch (error) {
-          clearTimeout(control.timer)
-          control.timer = undefined
-          if (run.cancelled || control.interrupt === "cancel") {
-            throw new WorkflowCancelledError("workflow was cancelled")
-          }
-          if (run.status === "paused" || control.interrupt === "pause" || control.interrupt === "resume") {
-            if (control.interrupt === "resume" && control.resumeAbort) {
-              const outcome = await awaitResumeAbort(control)
-              if (!outcome?.ok) throw error
+      if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
+      const timeout = new Promise<never>((_, reject) => {
+        agentControl.timer = setTimeout(() => {
+          agentControl.timer = undefined
+          agentControl.timedOut = true
+          journal(run, {
+            type: "agent_timeout",
+            label,
+            sessionID,
+            timeoutMs: cfg.agentTimeoutMs,
+          })
+          writeStatus(run)
+          void (async () => {
+            try {
+              unwrap(await (client.session.abort({ path: { id: sessionID! } }) as Promise<any>), "session.abort")
+            } catch (error: any) {
+              journal(run, {
+                type: "agent_abort_error",
+                action: "timeout",
+                label,
+                sessionID,
+                error: String(error?.message ?? error),
+              })
             }
-            text = "Continue where you left off. Complete the original task and return the requested result."
-            continue
-          }
-          throw error
-        }
-        clearTimeout(control.timer)
-        control.timer = undefined
+          })()
+          reject(new AgentTimeoutError(`agent "${label}" timed out after ${cfg.agentTimeoutMs}ms`))
+        }, cfg.agentTimeoutMs)
+      })
 
+      let res: any
+      try {
+        const request = client.session.prompt({
+          path: { id: sessionID },
+          query: { directory: run.directory },
+          body: {
+            parts: [{ type: "text", text: prompt }],
+            ...(model ? { model } : {}),
+            ...(opts.variant ? { variant: opts.variant } : {}),
+            system: opts.system ? `${opts.system}\n\n${CHILD_SYSTEM}` : CHILD_SYSTEM,
+            ...(opts.schema
+              ? {
+                  format: {
+                    type: "json_schema",
+                    schema: opts.schema,
+                    retryCount: 2,
+                  },
+                }
+              : {}),
+            tools: {
+              task: false,
+              workflow_run: false,
+              workflow_status: false,
+              workflow_cancel: false,
+            },
+          },
+        } as any) as Promise<any>
+        res = unwrap(await Promise.race([request, timeout]), "session.prompt")
+      } catch (error) {
         if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
-        if (run.status === "paused" || control.interrupt === "pause") {
-          text = "Continue where you left off. Complete the original task and return the requested result."
-          continue
+        if (agentControl.timedOut && !(error instanceof AgentTimeoutError)) {
+          throw new AgentTimeoutError(`agent "${label}" timed out after ${cfg.agentTimeoutMs}ms`)
         }
-        if (control.interrupt === "resume") {
-          const outcome = await awaitResumeAbort(control)
-          if (outcome?.ok) {
-            text = "Continue where you left off. Complete the original task and return the requested result."
-            continue
-          }
-        }
-        const responseError = res?.info?.error
-        if (responseError) throw new Error(`agent response failed: ${safeStringify(responseError).slice(0, 500)}`)
-        const result = opts.schema ? res?.info?.structured : extractText(res?.parts)
-        if (opts.schema && result === undefined) {
-          throw new Error(`agent "${label}" returned no structured output`)
-        }
-        run.agentsCompleted++
-        journal(run, {
-          type: "agent",
-          label,
-          sessionID,
-          model: opts.model ?? null,
-          variant: opts.variant ?? null,
-          durationMs: Date.now() - startedAt,
-          prompt,
-          result,
-        })
-        if (phase) phase.finished++
-        row.status = "completed"
-        writeStatus(run)
-        pushRunCard(run)
-        return result
+        throw error
+      } finally {
+        clearTimeout(agentControl.timer)
+        agentControl.timer = undefined
       }
+
+      if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
+      const responseError = res?.info?.error
+      if (responseError) throw new Error(`agent response failed: ${safeStringify(responseError).slice(0, 500)}`)
+      const result = opts.schema ? res?.info?.structured : extractText(res?.parts)
+      if (opts.schema && result === undefined) {
+        throw new Error(`agent "${label}" returned no structured output`)
+      }
+      run.agentsCompleted++
+      journal(run, {
+        type: "agent",
+        label,
+        sessionID,
+        model: opts.model ?? null,
+        variant: opts.variant ?? null,
+        durationMs: Date.now() - startedAt,
+        prompt,
+        result,
+      })
+      if (phase) phase.finished++
+      row.status = "completed"
+      writeStatus(run)
+      pushRunCard(run)
+      return result
     } catch (e: any) {
       if (e instanceof WorkflowCancelledError) throw e
       run.agentsFailed++
@@ -1397,7 +1124,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       .map((name) => readJsonIfExists(path.join(cfg.dataDir, name, "status.json")))
       .filter(Boolean)
     for (const status of statuses) {
-      if ((status.status === "running" || status.status === "paused") && !liveRuns.has(status.runId)) {
+      if (status.status === "running" && !liveRuns.has(status.runId)) {
         status.status = "interrupted"
       }
     }
@@ -1415,13 +1142,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     for (const control of run.activeAgents.values()) {
       clearTimeout(control.timer)
       control.timer = undefined
-      control.interrupt = "cancel"
       control.release?.()
       control.release = undefined
-      control.gate?.resolve()
     }
-    for (const gate of run.pauseWaiters) gate.resolve()
-    run.pauseWaiters.clear()
     for (const id of aborting) {
       ;(client.session.abort({ path: { id } }) as Promise<any>).catch(() => {})
     }
@@ -1443,7 +1166,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       const wf = part?.state?.metadata?.workflow
       if (!wf?.cancelRequested || !wf.runId) return
       const run = liveRuns.get(wf.runId)
-      if (!run || (run.status !== "running" && run.status !== "paused") || run.cancelled) return
+      if (!run || run.status !== "running" || run.cancelled) return
       cancelRun(run, "ui cancel button")
     },
     config: async (opencodeConfig: any) => {
@@ -1541,7 +1264,6 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             cancelled: false,
             activeSessions: new Set(),
             activeAgents: new Map(),
-            pauseWaiters: new Set(),
             phases: null,
             currentPhase: null,
             agentRows: [],
@@ -1587,7 +1309,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           return [
             `Workflow ${run.id} ("${run.name}") started in the background.`,
             `A completion message with the result will be injected into this session when it finishes — do NOT wait, poll, or sleep; finish your turn normally.`,
-            `Progress on demand: workflow_status({ runId: "${run.id}" }). Resume or interrupt: workflow_resume({ runId: "${run.id}" }). Cancel: workflow_cancel({ runId: "${run.id}" }).`,
+            `Progress on demand: workflow_status({ runId: "${run.id}" }). Cancel: workflow_cancel({ runId: "${run.id}" }).`,
             `Artifacts (script.js, journal, status, result): ${run.dir}`,
           ].join("\n")
         },
@@ -1614,9 +1336,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             ? statusSnapshot(live)
             : readJsonIfExists(path.join(cfg.dataDir, args.runId, "status.json"))
           if (!status) return `No run found with id ${args.runId}.`
-          if (!live && (status.status === "running" || status.status === "paused")) {
+          if (!live && status.status === "running") {
             status.status = "interrupted"
-            status.note = "The opencode server restarted while this run was in flight; it cannot be resumed."
+            status.note = "The opencode server restarted while this run was in flight."
           }
           const lines = [safeStringify({ ...status, logs: undefined }, 2)]
           const logs = (status.logs ?? []).slice(-20)
@@ -1644,25 +1366,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             if (!status) return `No run found with id ${args.runId}.`
             return `Run ${args.runId} is not live (status on disk: ${status.status}) — nothing to cancel.`
           }
-          if (run.status !== "running" && run.status !== "paused") return `Run ${args.runId} already ${run.status}.`
+          if (run.status !== "running") return `Run ${args.runId} already ${run.status}.`
           const aborted = cancelRun(run, "workflow_cancel tool")
           return `Cancellation requested for ${args.runId}: ${aborted} in-flight agent(s) aborted, no new agents will start. The run will settle as "cancelled" shortly (check workflow_status).`
-        },
-      }),
-
-      workflow_resume: tool({
-        description: `Manually recover a live workflow. For a paused run, continues every paused agent in the same child session and resets the ${cfg.agentTimeoutMs}ms working-duration guard after every interruption is confirmed; failed interruption attempts leave the run paused so resume can be retried safely. For a running run, interrupts every in-flight request and re-prompts those same sessions. Safe to call repeatedly. Runs cannot be resumed after an opencode server restart.`,
-        args: {
-          runId: tool.schema.string().describe("Live run id (workflow_...) to resume or interrupt."),
-        },
-        async execute(args) {
-          const run = liveRuns.get(args.runId)
-          if (!run) {
-            const status = readJsonIfExists(path.join(cfg.dataDir, args.runId, "status.json"))
-            if (!status) return `No run found with id ${args.runId}.`
-            return `Run ${args.runId} is not live (status on disk: ${status.status}) and cannot be resumed.`
-          }
-          return resumeRun(run)
         },
       }),
     },
