@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y \
     wget \
     sudo \
     git \
+    ripgrep \
+    sqlite3 \
     nano \
     openssh-server \
     jq \
