@@ -11,6 +11,7 @@ services:
     hostname: code-server
     environment:
       - OPENCODE_FORK=1
+      - "VITE_OPEN_IN_VSCODE_URL=https://trs.dev/?folder="
     ports:
       - "2222:22"
     volumes:

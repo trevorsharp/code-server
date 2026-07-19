@@ -4,6 +4,7 @@ package-lock.json
 bun.lock*
 
 features/
+Workspaces/
 projects/
 opencode/
 data/*
