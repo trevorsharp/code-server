@@ -2,29 +2,14 @@
   "$schema": "https://opencode.ai/config.json",
   "share": "disabled",
   "enabled_providers": [
-    "openai",
-    "github-copilot"
+    "openai"
   ],
-  "formatter": {
-    "csharpier": {
-      "command": [
-        "csharpier",
-        "format",
-        "$FILE"
-      ],
-      "extensions": [
-        ".cs",
-        ".csproj",
-        ".slnx"
-      ]
-    }
-  },
   "server": {
     "port": 4096,
     "hostname": "0.0.0.0",
     "cors": [
       "http://localhost:4096",
-      "https://work.trs.dev"
+      "https://ai.trs.dev"
     ]
   },
   "permission": {
@@ -34,46 +19,6 @@
     "task": false
   },
   "mcp": {
-    "Jira": {
-      "type": "remote",
-      "url": "https://jira-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Google Drive": {
-      "type": "remote",
-      "url": "https://gdrive-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Slack": {
-      "type": "remote",
-      "url": "https://slack-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Snowflake": {
-      "type": "remote",
-      "url": "https://snowflake-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Splunk": {
-      "type": "remote",
-      "url": "https://splunk-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Fastlane": {
-      "type": "remote",
-      "url": "https://fastlane-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Carvana Publish": {
-      "type": "remote",
-      "url": "https://publish-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Datadog": {
-      "type": "remote",
-      "url": "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp",
-      "enabled": false
-    },
     "Chrome DevTools": {
       "type": "local",
       "command": [

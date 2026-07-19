@@ -35,12 +35,6 @@ RUN mkdir -p /run/sshd \
     && echo "HostKey /etc/ssh/host_keys/ssh_host_rsa_key" >> /etc/ssh/sshd_config \
     && echo "HostKey /etc/ssh/host_keys/ssh_host_ed25519_key" >> /etc/ssh/sshd_config
 
-# Install .NET
-RUN apt-get install -y dotnet-sdk-8.0 dotnet-sdk-10.0
-
-# Install Azure CLI
-RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-
 # Install GitHub CLI
 RUN mkdir -p -m 755 /etc/apt/keyrings \
     && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -51,6 +45,13 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
     && apt-get update \
     && apt-get install gh -y
 
+# Install ffmpeg
+RUN apt-get install -y ffmpeg
+
+# Install yt-dlp
+RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/bin/yt-dlp && \
+    chmod a+x /usr/bin/yt-dlp
+
 # Switch to user for user-specific installations
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}
@@ -60,7 +61,6 @@ RUN touch /home/${USERNAME}/.sudo_as_admin_successful
 # Overwrite .bashrc
 RUN cat << 'EOF' > /home/${USERNAME}/.bashrc
 PS1='\h \W \$ '
-export PATH="$HOME/projects/TrevorSharp/CustomGitCommands/scripts:$PATH"
 EOF
 
 # Install NVM, Node.js LTS, and Yarn
@@ -75,14 +75,15 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | b
 ENV BUN_INSTALL=/home/${USERNAME}/.bun
 RUN curl -fsSL https://bun.sh/install | bash
 
+# Install code-server
+RUN mkdir -p /home/${USERNAME}/.local/share/code-server
+RUN curl -fsSL https://code-server.dev/install.sh | sh
+
 # Install OpenCode
 RUN curl -fsSL https://opencode.ai/install | bash
 
 # Install workspace CLI
 RUN curl -fsSL https://static.fastly.carvanatech.com/workspace-cli/install.sh | bash
-
-# Install CSharpier globally
-RUN dotnet tool install csharpier --global --version 1.1.1
 
 # Install Chromium for headless browser Chrome DevTools MCP
 RUN . ${NVM_DIR}/nvm.sh \
@@ -94,6 +95,7 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 22
+EXPOSE 8080
 EXPOSE 4096
 
 ENTRYPOINT ["/entrypoint.sh"]

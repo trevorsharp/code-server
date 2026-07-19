@@ -4,49 +4,37 @@ services:
       context: ./setup
       args:
         USERNAME: sharp
-        USER_UID: 504
+        USER_UID: 501
         USER_GID: 20
     restart: unless-stopped
     container_name: code-server
-    hostname: work-code-server
+    hostname: code-server
     environment:
       - OPENCODE_FORK=1
-      - NOTIFY_SLACK_WEBHOOK_URL=${NOTIFY_SLACK_WEBHOOK_URL}
-      - PAYMENTS_TESTING_AUTH_CLIENT_SECRET=${PAYMENTS_TESTING_AUTH_CLIENT_SECRET}
     ports:
-      # SSH
       - "2222:22"
-      # OpenCode
-      - "127.0.0.1:4096:4096"
-      # Dev Ports
-      - "127.0.0.1:3000:3000"
-      - "127.0.0.1:3001:3001"
-      - "127.0.0.1:3002:3002"
-      - "127.0.0.1:5000:5000"
-      - "127.0.0.1:5001:5001"
-      - "127.0.0.1:5002:5002"
-      # Chrome DevTools
-      - "127.0.0.1:9222:9222"
     volumes:
       - ./projects:/home/sharp/projects
-      - ./features:/home/sharp/features
+      - ./workspaces:/home/sharp/workspaces
       - ./opencode:/home/sharp/opencode
-      - ~/Downloads:/home/sharp/Downloads
-      - ./data/npmrc:/home/sharp/.npmrc:ro
-      - ./data/NuGet.Config:/home/sharp/.nuget/NuGet/NuGet.Config:ro
-      - ./data/certs:/home/sharp/certs:ro
       - ./data/ssh:/home/sharp/.ssh:ro
       - ./data/ssh-host:/etc/ssh/host_keys:ro
       - ./data/gitconfig:/home/sharp/.gitconfig:ro
       - ./data/git-data:/home/sharp/.git-data
       - ./data/vscode-server:/home/sharp/.vscode-server
-      - ./data/azure:/home/sharp/.azure
       - ./data/gh:/home/sharp/.config/gh
       - ./data/opencode-config:/home/sharp/.config/opencode
       - ./data/opencode-storage:/home/sharp/.local/share/opencode
       - ./data/workspace-config:/home/sharp/.config/workspace
-      - ./data/claude:/home/sharp/.claude
       - ./data/AGENTS.md:/home/sharp/.config/opencode/AGENTS.md:ro
-      - ./data/AGENTS.md:/home/sharp/.claude/CLAUDE.md:ro
       - ./data/skills:/home/sharp/.config/opencode/skills
-      - ./data/skills:/home/sharp/.claude/skills
+      - ./data/code-server:/home/sharp/.config/code-server
+      - ./data/code-server-settings.json:/home/sharp/.local/share/code-server/User/settings.json
+      - ./data/code-server-extensions:/home/sharp/.local/share/code-server/extensions
+      - ./data/code-server-login.css:/usr/lib/code-server/src/browser/pages/login.css:ro
+    networks:
+      - webserver
+
+networks:
+  webserver:
+    external: true

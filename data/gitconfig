@@ -1,9 +1,9 @@
 [user]
 	name = Trevor Sharp
-	email = trevor.sharp@carvana.com
+	email = sharp.trevor@carvana.com
 [core]
 	editor = nano
 [push]
-    autoSetupRemote = true
+	autoSetupRemote = true
 [credential]
 	helper = store --file /home/sharp/.git-data/git-credentials

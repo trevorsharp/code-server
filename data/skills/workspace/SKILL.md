@@ -17,9 +17,9 @@ Preserve the user's casing for workspace display names. Prefer Title Case only w
 - `workspace add <folder-path>`: adds one git repo as a worktree or one non-git folder as a symlink to the current or targeted workspace.
 - `workspace rm <folder-name...>`: safely removes folders. Use `--force` only when dirty/unpushed work can be discarded from worktree folders.
 - `workspace delete [name]`: deletes an empty workspace; `--force` removes all worktrees and files.
-- `workspace rename <new-name>`: updates `.workspace` and current branch descriptions in git repo folders without renaming the directory or branches.
+- `workspace rename <new-name>`: updates `.workspace` without renaming the directory or branches.
 - `workspace list`: lists workspace names and paths under the configured workspaces directory. Use `--verbose` to include folders.
-- `workspace info [name]`: shows one workspace.
+- `workspace info [name]`: shows one workspace. Use `--name` for only the display name.
 
 ## Targeting
 
