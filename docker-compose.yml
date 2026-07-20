@@ -29,7 +29,7 @@ services:
       - "127.0.0.1:9222:9222"
     volumes:
       - ./projects:/home/sharp/projects
-      - ./features:/home/sharp/features
+      - ./workspaces:/home/sharp/workspaces
       - ./opencode:/home/sharp/opencode
       - ~/Downloads:/home/sharp/Downloads
       - ./data/npmrc:/home/sharp/.npmrc:ro
