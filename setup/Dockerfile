@@ -78,6 +78,9 @@ RUN curl -fsSL https://bun.sh/install | bash
 # Install OpenCode
 RUN curl -fsSL https://opencode.ai/install | bash
 
+# Install Claude Code
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
 # Install workspace CLI
 RUN curl -fsSL https://static.fastly.carvanatech.com/workspace-cli/install.sh | bash
 

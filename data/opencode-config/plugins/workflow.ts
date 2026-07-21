@@ -2,6 +2,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import * as os from "node:os"
 import { tool, type Plugin } from "@opencode-ai/plugin"
+import { isClaudeCliModel, startClaudeCliAgent } from "../workflow-claude-cli"
 
 // ---------------------------------------------------------------------------
 // opencode-workflows: deterministic multi-agent orchestration for OpenCode.
@@ -79,6 +80,7 @@ type AgentControl = {
   release?: () => void
   timer?: ReturnType<typeof setTimeout>
   timedOut: boolean
+  abort?: () => void
 }
 
 type Run = {
@@ -677,6 +679,17 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     }
   }
 
+  async function appendExternalTranscript(run: Run, sessionID: string, body: Record<string, any>): Promise<void> {
+    const url = new URL(`/session/${sessionID}/external-transcript`, serverUrl)
+    url.searchParams.set("directory", run.directory)
+    const headers: Record<string, string> = { "content-type": "application/json" }
+    if (process.env.OPENCODE_SERVER_PASSWORD) {
+      headers.authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`
+    }
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) })
+    if (!res.ok) throw new Error(`external transcript failed (${res.status}): ${(await res.text()).slice(0, 300)}`)
+  }
+
   // Phase progress cards: one card per declared phase, pending upfront, running
   // while its agents are in flight, settled with aggregate counts.
 
@@ -762,6 +775,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
     const label = opts.label ?? (typeof prompt === "string" ? prompt.replace(/\s+/g, " ").slice(0, 60) : "agent")
     let phase: PhaseState | null = null
     let sessionID: string | undefined
+    let activeAgentID: string | undefined
     let row: AgentRow | null = null
     let control: AgentControl | undefined
     let release: (() => void) | undefined
@@ -793,8 +807,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           throw new Error(`variant "${opts.variant}" is not supported by ${opts.model}; supported: ${known.join(", ")}`)
         }
       }
-      const model = opts.model ? parseModelSlug(opts.model) : undefined
-      const modelLabel = model ? `${model.modelID} (${opts.variant})` : "session default"
+      const useClaudeCli = isClaudeCliModel(opts.model)
+      const model = opts.model && !useClaudeCli ? parseModelSlug(opts.model) : undefined
+      const modelLabel = opts.model ? `${opts.model} (${opts.variant})` : "session default"
 
       if (run.agentsSpawned >= cfg.maxAgentsPerRun) {
         throw new Error(`agent cap reached (${cfg.maxAgentsPerRun} per run)`)
@@ -811,10 +826,21 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           body: {
             parentID: run.callerSessionID,
             title: `${run.id} ${label}`,
+            ...(useClaudeCli
+              ? {
+                  agent: "claude-cli",
+                  model: {
+                    providerID: "claude-cli",
+                    id: opts.model!.slice("claude-cli/".length),
+                    variant: opts.variant,
+                  },
+                }
+              : {}),
             metadata: {
               background: true,
               parentSessionId: run.callerSessionID,
               source: "workflow",
+              ...(useClaudeCli ? { externalAgent: "claude-cli" } : {}),
             },
           } as any,
           query: { directory: run.directory },
@@ -824,6 +850,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       sessionID = session?.id
       if (!sessionID) throw new Error(`session.create returned no id: ${safeStringify(session).slice(0, 300)}`)
       run.activeSessions.add(sessionID)
+      activeAgentID = sessionID
       row = {
         label,
         model: modelLabel,
@@ -841,7 +868,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         timedOut: false,
       }
       control = agentControl
-      run.activeAgents.set(sessionID, agentControl)
+      run.activeAgents.set(activeAgentID, agentControl)
       pushRunCard(run)
 
       if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
@@ -856,51 +883,113 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             timeoutMs: cfg.agentTimeoutMs,
           })
           writeStatus(run)
-          void (async () => {
-            try {
-              unwrap(await (client.session.abort({ path: { id: sessionID! } }) as Promise<any>), "session.abort")
-            } catch (error: any) {
-              journal(run, {
-                type: "agent_abort_error",
-                action: "timeout",
-                label,
-                sessionID,
-                error: String(error?.message ?? error),
-              })
-            }
-          })()
+          agentControl.abort?.()
           reject(new AgentTimeoutError(`agent "${label}" timed out after ${cfg.agentTimeoutMs}ms`))
         }, cfg.agentTimeoutMs)
       })
 
       let res: any
       try {
-        const request = client.session.prompt({
-          path: { id: sessionID },
-          query: { directory: run.directory },
-          body: {
-            parts: [{ type: "text", text: prompt }],
-            ...(model ? { model } : {}),
-            ...(opts.variant ? { variant: opts.variant } : {}),
-            system: opts.system ? `${opts.system}\n\n${CHILD_SYSTEM}` : CHILD_SYSTEM,
-            ...(opts.schema
-              ? {
-                  format: {
-                    type: "json_schema",
-                    schema: opts.schema,
-                    retryCount: 2,
-                  },
+        const system = opts.system ? `${opts.system}\n\n${CHILD_SYSTEM}` : CHILD_SYSTEM
+        let request: Promise<any>
+        if (useClaudeCli) {
+          const providerID = "claude-cli"
+          const modelID = opts.model!.slice("claude-cli/".length)
+          let claudeSessionID: string | undefined
+          const tools = new Map<string, { tool: string; input: Record<string, any> }>()
+          await appendExternalTranscript(run, sessionID, {
+            type: "user",
+            providerID,
+            modelID,
+            text: prompt,
+          })
+          const handle = startClaudeCliAgent({
+            directory: run.directory,
+            prompt,
+            model: opts.model!,
+            variant: opts.variant!,
+            system,
+            schema: opts.schema,
+            onEvent: async (event) => {
+              if (event?.type === "system" && event?.subtype === "init") {
+                claudeSessionID = event.session_id
+                return
+              }
+              if (event?.type === "assistant" && Array.isArray(event.message?.content)) {
+                for (const block of event.message.content) {
+                  if (block?.type === "text" && typeof block.text === "string" && block.text) {
+                    await appendExternalTranscript(run, sessionID!, {
+                      type: "text",
+                      providerID,
+                      modelID,
+                      claudeSessionID,
+                      text: block.text,
+                    })
+                  }
+                  if (block?.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
+                    tools.set(block.id, {
+                      tool: block.name.toLowerCase(),
+                      input: block.input && typeof block.input === "object" ? block.input : { value: block.input },
+                    })
+                  }
                 }
-              : {}),
-            tools: {
-              task: false,
-              workflow_run: false,
-              workflow_status: false,
-              workflow_cancel: false,
+                return
+              }
+              if (event?.type !== "user" || !Array.isArray(event.message?.content)) return
+              for (const block of event.message.content) {
+                if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue
+                const tool = tools.get(block.tool_use_id)
+                if (!tool) continue
+                const output =
+                  typeof block.content === "string" ? block.content : safeStringify(block.content ?? event.tool_use_result)
+                await appendExternalTranscript(run, sessionID!, {
+                  type: "tool",
+                  providerID,
+                  modelID,
+                  claudeSessionID,
+                  callID: block.tool_use_id,
+                  tool: tool.tool,
+                  input: tool.input,
+                  output,
+                  error: block.is_error === true,
+                })
+                tools.delete(block.tool_use_id)
+              }
             },
-          },
-        } as any) as Promise<any>
-        res = unwrap(await Promise.race([request, timeout]), "session.prompt")
+          })
+          agentControl.abort = handle.abort
+          request = handle.result
+        } else {
+          agentControl.abort = () => {
+            ;(client.session.abort({ path: { id: sessionID! } }) as Promise<any>).catch(() => {})
+          }
+          request = client.session.prompt({
+            path: { id: sessionID },
+            query: { directory: run.directory },
+            body: {
+              parts: [{ type: "text", text: prompt }],
+              ...(model ? { model } : {}),
+              ...(opts.variant ? { variant: opts.variant } : {}),
+              system,
+              ...(opts.schema
+                ? {
+                    format: {
+                      type: "json_schema",
+                      schema: opts.schema,
+                      retryCount: 2,
+                    },
+                  }
+                : {}),
+              tools: {
+                task: false,
+                workflow_run: false,
+                workflow_status: false,
+                workflow_cancel: false,
+              },
+            },
+          } as any) as Promise<any>
+        }
+        res = unwrap(await Promise.race([request, timeout]), useClaudeCli ? "claude -p" : "session.prompt")
       } catch (error) {
         if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
         if (agentControl.timedOut && !(error instanceof AgentTimeoutError)) {
@@ -913,9 +1002,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       }
 
       if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
-      const responseError = res?.info?.error
+      const responseError = useClaudeCli ? undefined : res?.info?.error
       if (responseError) throw new Error(`agent response failed: ${safeStringify(responseError).slice(0, 500)}`)
-      const result = opts.schema ? res?.info?.structured : extractText(res?.parts)
+      const result = useClaudeCli ? res : opts.schema ? res?.info?.structured : extractText(res?.parts)
       if (opts.schema && result === undefined) {
         throw new Error(`agent "${label}" returned no structured output`)
       }
@@ -955,7 +1044,7 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       clearTimeout(control?.timer)
       control?.release?.()
       if (!control) release?.()
-      if (sessionID) run.activeAgents.delete(sessionID)
+      if (activeAgentID) run.activeAgents.delete(activeAgentID)
       if (sessionID) run.activeSessions.delete(sessionID)
     }
   }
@@ -1138,23 +1227,21 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
 
   function cancelRun(run: Run, reason: string): number {
     run.cancelled = true
-    const aborting = [...run.activeSessions]
+    const aborting = run.activeAgents.size
     for (const control of run.activeAgents.values()) {
       clearTimeout(control.timer)
       control.timer = undefined
+      control.abort?.()
       control.release?.()
       control.release = undefined
-    }
-    for (const id of aborting) {
-      ;(client.session.abort({ path: { id } }) as Promise<any>).catch(() => {})
     }
     journal(run, {
       type: "cancel_requested",
       reason,
-      abortedSessions: aborting.length,
+      abortedAgents: aborting,
     })
     writeStatus(run)
-    return aborting.length
+    return aborting
   }
 
   return {

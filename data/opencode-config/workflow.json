@@ -13,14 +13,14 @@
       "note": "The implementer. Use for complex implementation, and larger-scale changes."
     },
     {
-      "slug": "github-copilot/claude-fable-5",
+      "slug": "claude-cli/fable",
       "variant": "high",
-      "note": "The strategic planner. Use for architecture and design planning, strategic tradeoffs, and other long-horizon planning work. Expect premium cost and higher latency."
+      "note": "The strategic planner. Use for architecture, design, strategic tradeoffs, and long-horizon planning through Claude Enterprise. Cannot make changes directly and doesn't have access to MCPs or additional tools."
     },
     {
-      "slug": "github-copilot/claude-fable-5",
+      "slug": "claude-cli/fable",
       "variant": "low",
-      "note": "The critic. Use for code review, identifying over-building, consistency checks, scope reduction, and bounded adversarial review."
+      "note": "The critic. Use for code review, consistency checks, scope reduction, and bounded adversarial review through Claude Enterprise. Cannot make changes directly and doesn't have access to MCPs or additional tools."
     },
     {
       "slug": "openai/gpt-5.6-sol",

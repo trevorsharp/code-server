@@ -465,6 +465,7 @@ export const SchedulePlugin: Plugin = async ({
     variant: string,
     timeoutMs: number,
     allowCancel = false,
+    disableWorkflows = false,
   ): Promise<string> {
     const response = unwrap(
       await withTimeout(
@@ -480,6 +481,13 @@ export const SchedulePlugin: Plugin = async ({
               schedule_list: false,
               schedule_status: false,
               schedule_cancel: allowCancel,
+              ...(disableWorkflows
+                ? {
+                    workflow_run: false,
+                    workflow_status: false,
+                    workflow_cancel: false,
+                  }
+                : {}),
             },
           },
         }) as Promise<any>,
@@ -532,7 +540,7 @@ export const SchedulePlugin: Plugin = async ({
     live.sessions.add(sessionID);
     pushCard(live);
     const rules =
-      'You are running as part of a scheduled job. Your task has been defined below or in a previous message. You should not track context in files (unless explicitly asked). Run or re-run any required checks and reply with only {"shouldEscalate":boolean,"reason":"One sentence of why or why not to escalate","context":"Context relevant to the escalation or empty string if not escalating"}.';
+      'You are running as the trigger agent for a scheduled job. Your task has been defined below or in a previous message. Perform the quick checks yourself; do not use workflows or delegate to other agents. You should not track context in files (unless explicitly asked). An escalation does not stop the schedule, so continue evaluating the task on future occurrences until the job expires or a work agent cancels it. Run or re-run any required checks and reply with only {"shouldEscalate":boolean,"reason":"One sentence of why or why not to escalate","context":"Context relevant to the escalation or empty string if not escalating"}.';
     let message = isNew ? `${rules}\n\n${job.triggerPrompt}` : rules;
 
     try {
@@ -544,6 +552,8 @@ export const SchedulePlugin: Plugin = async ({
           config.triggerModel,
           config.triggerVariant,
           TRIGGER_TIMEOUT_MS,
+          false,
+          true,
         );
         const verdict = parseVerdict(response);
         if (verdict) return verdict;
@@ -582,7 +592,7 @@ export const SchedulePlugin: Plugin = async ({
       await prompt(
         job,
         sessionID,
-        `You are running as part of a scheduled job. Another agent has decided to escalate to you to perform a one-off task described below. You should not track context in files (unless explicitly asked). Run any required checks and re-validate any conclusions provided as context below. Do not ask the user questions as this is running in a background session. If you determine the job's end condition has been met, call \`schedule_cancel\` with jobId \`${job.id}\`.\n\nEscalation reason: "${verdict.reason}"\nContext: "${verdict.context}"\n\nYour task:\n${job.workPrompt}`,
+        `You are running as part of a scheduled job. Another agent has decided to escalate to you to perform a one-off task described below. This escalation does not stop the schedule; the trigger agent will continue running on future occurrences. You should not track context in files (unless explicitly asked). Run any required checks and re-validate any conclusions provided as context below. Do not ask the user questions as this is running in a background session. Do not cancel the schedule merely because this escalation is resolved, is a false alarm, or your one-off task is complete. Call \`schedule_cancel\` with jobId \`${job.id}\` only if the task explicitly defines an overall end condition for the scheduled job and the available evidence confirms that condition has been met. Otherwise, leave the schedule running until it expires.\n\nEscalation reason: "${verdict.reason}"\nContext: "${verdict.context}"\n\nYour task:\n${job.workPrompt}`,
         config.workModel,
         config.workVariant,
         WORK_TIMEOUT_MS,
