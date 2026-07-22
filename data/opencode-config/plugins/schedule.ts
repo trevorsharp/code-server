@@ -253,7 +253,7 @@ function parseVerdict(text: string): {
           context: String(value.context ?? ""),
         };
       }
-    } catch {}
+    } catch { }
   }
   return null;
 }
@@ -294,7 +294,7 @@ async function withTimeout<T>(
   try {
     return await Promise.race([promise, timeout]);
   } catch (error) {
-    if (String(error).includes("timed out")) await onTimeout().catch(() => {});
+    if (String(error).includes("timed out")) await onTimeout().catch(() => { });
     throw error;
   } finally {
     clearTimeout(timer);
@@ -345,14 +345,14 @@ export const SchedulePlugin: Plugin = async ({
       Boolean(job.triggerSessionID && live.sessions.has(job.triggerSessionID));
     const triggerAgents = job.triggerSessionID
       ? [
-          {
-            sessionID: job.triggerSessionID,
-            label: "Trigger",
-            model: config.triggerModel,
-            variant: config.triggerVariant,
-            status: triggerRunning ? "running" : "completed",
-          },
-        ]
+        {
+          sessionID: job.triggerSessionID,
+          label: "Trigger",
+          model: config.triggerModel,
+          variant: config.triggerVariant,
+          status: triggerRunning ? "running" : "completed",
+        },
+      ]
       : [];
     const workSessions = job.workSessions ?? [];
     return {
@@ -483,10 +483,10 @@ export const SchedulePlugin: Plugin = async ({
               schedule_cancel: allowCancel,
               ...(disableWorkflows
                 ? {
-                    workflow_run: false,
-                    workflow_status: false,
-                    workflow_cancel: false,
-                  }
+                  workflow_run: false,
+                  workflow_status: false,
+                  workflow_cancel: false,
+                }
                 : {}),
             },
           },
@@ -529,7 +529,7 @@ export const SchedulePlugin: Plugin = async ({
         `Schedule "${job.name}" trigger`,
       );
       if (job.status !== "running") {
-        await client.session.abort({ path: { id: sessionID } }).catch(() => {});
+        await client.session.abort({ path: { id: sessionID } }).catch(() => { });
         throw new Error(`job is ${job.status}`);
       }
       job.triggerSessionID = sessionID;
@@ -540,7 +540,7 @@ export const SchedulePlugin: Plugin = async ({
     live.sessions.add(sessionID);
     pushCard(live);
     const rules =
-      'You are running as the trigger agent for a scheduled job. Your task has been defined below or in a previous message. Perform the quick checks yourself; do not use workflows or delegate to other agents. You should not track context in files (unless explicitly asked). An escalation does not stop the schedule, so continue evaluating the task on future occurrences until the job expires or a work agent cancels it. Run or re-run any required checks and reply with only {"shouldEscalate":boolean,"reason":"One sentence of why or why not to escalate","context":"Context relevant to the escalation or empty string if not escalating"}.';
+      'You are running as the trigger agent for a scheduled job. Your task has been defined below or in a previous message. Perform the quick checks yourself; do not use workflows or delegate to other agents. You should never track context in the file system (only keep track of context in the agent session). An escalation does not stop the schedule, so continue evaluating the task on future occurrences until the job expires or a work agent cancels it. Run or re-run any required checks and reply with only {"shouldEscalate":boolean,"reason":"One sentence of why or why not to escalate","context":"Context relevant to the escalation or empty string if not escalating"}.';
     let message = isNew ? `${rules}\n\n${job.triggerPrompt}` : rules;
 
     try {
@@ -573,7 +573,7 @@ export const SchedulePlugin: Plugin = async ({
     const job = live.job;
     const sessionID = await createSession(job, `Schedule "${job.name}" work`);
     if (job.status !== "running") {
-      await client.session.abort({ path: { id: sessionID } }).catch(() => {});
+      await client.session.abort({ path: { id: sessionID } }).catch(() => { });
       return;
     }
     job.workRunCount = (job.workRunCount ?? 0) + 1;
