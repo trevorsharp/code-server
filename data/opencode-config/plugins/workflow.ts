@@ -1,8 +1,8 @@
-import * as fs from "node:fs"
-import * as path from "node:path"
-import * as os from "node:os"
-import { tool, type Plugin } from "@opencode-ai/plugin"
-import { isClaudeCliModel, startClaudeCliAgent } from "../workflow-claude-cli"
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+import { tool, type Plugin } from "@opencode-ai/plugin";
+import { isClaudeCliModel, startClaudeCliAgent } from "../workflow-claude-cli";
 
 // ---------------------------------------------------------------------------
 // opencode-workflows: deterministic multi-agent orchestration for OpenCode.
@@ -33,87 +33,96 @@ import { isClaudeCliModel, startClaudeCliAgent } from "../workflow-claude-cli"
 // endpoint; on stock opencode the plugin feature-detects and skips them.
 // ---------------------------------------------------------------------------
 
-type ModelEntry = { slug: string; variant: string; note?: string }
+type ModelEntry = { slug: string; variant: string; note?: string };
 
 type WorkflowConfig = {
-  enabled: boolean
-  models: ModelEntry[]
-  maxConcurrency: number
-  maxAgentsPerRun: number
-  agentTimeoutMs: number
-  dataDir: string
-}
+  enabled: boolean;
+  models: ModelEntry[];
+  maxConcurrency: number;
+  maxAgentsPerRun: number;
+  agentTimeoutMs: number;
+  dataDir: string;
+};
 
 type AgentOpts = {
-  label?: string
-  model?: string
-  variant?: string
-  system?: string
-  schema?: any
-  phase?: string
-}
+  label?: string;
+  model?: string;
+  variant?: string;
+  system?: string;
+  schema?: any;
+  phase?: string;
+};
 
 type WorkflowMeta = {
-  name: string
-  description: string
-  phases?: Array<{ title: string; detail?: string }>
-}
+  name: string;
+  description: string;
+  phases?: Array<{ title: string; detail?: string }>;
+};
 
 type PhaseState = {
-  title: string
-  detail?: string
-  started: number
-  finished: number
-  failed: number
-  models: string[]
-}
+  title: string;
+  detail?: string;
+  started: number;
+  finished: number;
+  failed: number;
+  models: string[];
+};
 
 type AgentRow = {
-  label: string
-  model?: string
-  status: "running" | "completed" | "error"
-  sessionID?: string
-  phase?: string
-}
+  label: string;
+  model?: string;
+  status: "running" | "completed" | "error";
+  sessionID?: string;
+  phase?: string;
+};
 
 type AgentControl = {
-  release?: () => void
-  timer?: ReturnType<typeof setTimeout>
-  timedOut: boolean
-  abort?: () => void
-}
+  release?: () => void;
+  timer?: ReturnType<typeof setTimeout>;
+  timedOut: boolean;
+  abort?: () => void;
+};
 
 type Run = {
-  id: string
-  name: string
-  status: "running" | "completed" | "failed" | "cancelled"
-  callerSessionID: string
-  directory: string
-  dir: string
-  startedAt: number
-  finishedAt?: number
-  agentsSpawned: number
-  agentsCompleted: number
-  agentsFailed: number
-  logs: string[]
-  error?: string
-  result?: any
-  cancelled: boolean
-  activeSessions: Set<string>
-  activeAgents: Map<string, AgentControl>
-  phases: PhaseState[] | null
-  currentPhase: string | null
-  agentRows: AgentRow[]
-  card: { messageID: string; partID: string } | null
-  cardQueue: Promise<void>
-}
+  id: string;
+  name: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  callerSessionID: string;
+  directory: string;
+  dir: string;
+  startedAt: number;
+  finishedAt?: number;
+  agentsSpawned: number;
+  agentsCompleted: number;
+  agentsFailed: number;
+  logs: string[];
+  error?: string;
+  result?: any;
+  cancelled: boolean;
+  activeSessions: Set<string>;
+  activeAgents: Map<string, AgentControl>;
+  phases: PhaseState[] | null;
+  currentPhase: string | null;
+  agentRows: AgentRow[];
+  card: { messageID: string; partID: string } | null;
+  cardQueue: Promise<void>;
+};
 
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-const SCRIPT_PARAMS = ["agent", "parallel", "pipeline", "log", "sleep", "args", "runId", "phase"]
-const META_PREFIX = "export const meta ="
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const SCRIPT_PARAMS = [
+  "agent",
+  "parallel",
+  "pipeline",
+  "log",
+  "sleep",
+  "args",
+  "runId",
+  "phase",
+];
+const META_PREFIX = "export const meta =";
 const CHILD_SYSTEM =
-  "Your final reply is raw workflow return data consumed by an orchestration script, not a message to a user. Your normal session tools and MCP integrations are available, except task and workflow tools."
-const liveRuns = new Map<string, Run>()
+  "Your final reply is raw workflow return data consumed by an orchestration script, not a message to a user. Your normal session tools and MCP integrations are available, except task and workflow tools.";
+const liveRuns = new Map<string, Run>();
 
 // ---------------------------------------------------------------------------
 // Config
@@ -126,26 +135,37 @@ const DEFAULT_CONFIG: WorkflowConfig = {
   maxAgentsPerRun: 100,
   agentTimeoutMs: 1_800_000,
   dataDir: path.join(os.homedir(), ".local", "share", "opencode", "workflows"),
-}
+};
 
 function readJsonIfExists(file: string): any {
   try {
-    if (!fs.existsSync(file)) return null
-    return JSON.parse(fs.readFileSync(file, "utf8"))
+    if (!fs.existsSync(file)) return null;
+    return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (e) {
-    console.error(`[workflow plugin] failed to parse ${file}: ${e}`)
-    return null
+    console.error(`[workflow plugin] failed to parse ${file}: ${e}`);
+    return null;
   }
 }
 
 function loadConfig(worktree: string | undefined): WorkflowConfig {
-  const globalCfg = readJsonIfExists(path.join(os.homedir(), ".config", "opencode", "workflow.json")) ?? {}
-  const projectCfg = worktree ? (readJsonIfExists(path.join(worktree, ".opencode", "workflow.json")) ?? {}) : {}
-  const merged = { ...DEFAULT_CONFIG, ...globalCfg, ...projectCfg }
+  const globalCfg =
+    readJsonIfExists(
+      path.join(os.homedir(), ".config", "opencode", "workflow.json"),
+    ) ?? {};
+  const projectCfg = worktree
+    ? (readJsonIfExists(path.join(worktree, ".opencode", "workflow.json")) ??
+      {})
+    : {};
+  const merged = { ...DEFAULT_CONFIG, ...globalCfg, ...projectCfg };
   merged.models = Array.isArray(merged.models)
-    ? merged.models.filter((model: any) => model && typeof model.slug === "string" && typeof model.variant === "string")
-    : []
-  return merged
+    ? merged.models.filter(
+        (model: any) =>
+          model &&
+          typeof model.slug === "string" &&
+          typeof model.variant === "string",
+      )
+    : [];
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,246 +173,292 @@ function loadConfig(worktree: string | undefined): WorkflowConfig {
 // ---------------------------------------------------------------------------
 
 class Semaphore {
-  private active = 0
-  private queue: Array<() => void> = []
+  private active = 0;
+  private queue: Array<() => void> = [];
   constructor(private limit: number) {}
   async acquire(): Promise<() => void> {
     while (this.active >= this.limit) {
-      await new Promise<void>((resolve) => this.queue.push(resolve))
+      await new Promise<void>((resolve) => this.queue.push(resolve));
     }
-    this.active++
-    let released = false
+    this.active++;
+    let released = false;
     return () => {
-      if (released) return
-      released = true
-      this.active--
-      const next = this.queue.shift()
-      if (next) next()
-    }
+      if (released) return;
+      released = true;
+      this.active--;
+      const next = this.queue.shift();
+      if (next) next();
+    };
   }
 }
 
 function newRunId(): string {
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, "0")
-  const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
-  const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-  return `workflow_${date}_${time}`
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+  const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  return `workflow_${date}_${time}`;
 }
 
 function unwrap(res: any, what: string): any {
   if (res && typeof res === "object" && "error" in res && res.error) {
-    throw new Error(`${what} failed: ${safeStringify(res.error).slice(0, 500)}`)
+    throw new Error(
+      `${what} failed: ${safeStringify(res.error).slice(0, 500)}`,
+    );
   }
-  return res && typeof res === "object" && "data" in res ? res.data : res
+  return res && typeof res === "object" && "data" in res ? res.data : res;
 }
 
 function safeStringify(value: any, space?: number): string {
   try {
-    return JSON.stringify(value, null, space) ?? "null"
+    return JSON.stringify(value, null, space) ?? "null";
   } catch {
-    return String(value)
+    return String(value);
   }
 }
 
 function extractText(parts: any[]): string {
   return (parts ?? [])
-    .filter((p) => p?.type === "text" && !p.synthetic && typeof p.text === "string")
+    .filter(
+      (p) => p?.type === "text" && !p.synthetic && typeof p.text === "string",
+    )
     .map((p) => p.text)
     .join("\n")
-    .trim()
+    .trim();
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  what: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)), ms)
-  })
+    timer = setTimeout(
+      () =>
+        reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)),
+      ms,
+    );
+  });
   try {
-    return await Promise.race([promise, timeout])
+    return await Promise.race([promise, timeout]);
   } finally {
-    clearTimeout(timer)
+    clearTimeout(timer);
   }
 }
 
 function parseScript(script: string): {
-  meta: WorkflowMeta
-  executable: string
+  meta: WorkflowMeta;
+  executable: string;
 } {
   if (!script.startsWith(META_PREFIX)) {
-    throw new Error(`script must begin exactly with ${META_PREFIX}{...}`)
+    throw new Error(`script must begin exactly with ${META_PREFIX}{...}`);
   }
 
-  let start = META_PREFIX.length
-  while (/\s/.test(script[start] ?? "")) start++
-  if (script[start] !== "{") throw new Error("meta must be an object literal")
+  let start = META_PREFIX.length;
+  while (/\s/.test(script[start] ?? "")) start++;
+  if (script[start] !== "{") throw new Error("meta must be an object literal");
 
-  let end = -1
-  let depth = 0
-  let quote: string | null = null
-  let escaped = false
+  let end = -1;
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
   for (let index = start; index < script.length; index++) {
-    const char = script[index]!
+    const char = script[index]!;
     if (quote) {
-      if (escaped) escaped = false
-      else if (char === "\\") escaped = true
-      else if (char === quote) quote = null
-      continue
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
     }
-    if (char === "`") throw new Error("meta must not contain template literals or interpolation")
+    if (char === "`")
+      throw new Error(
+        "meta must not contain template literals or interpolation",
+      );
     if (char === '"' || char === "'") {
-      quote = char
-      continue
+      quote = char;
+      continue;
     }
-    if (char === "{") depth++
+    if (char === "{") depth++;
     if (char === "}" && --depth === 0) {
-      end = index + 1
-      break
+      end = index + 1;
+      break;
     }
   }
-  if (quote || end < 0) throw new Error("meta object literal is not balanced")
+  if (quote || end < 0) throw new Error("meta object literal is not balanced");
 
-  const literal = script.slice(start, end)
-  let index = 0
+  const literal = script.slice(start, end);
+  let index = 0;
   const skipSpace = () => {
-    while (/\s/.test(literal[index] ?? "")) index++
-  }
+    while (/\s/.test(literal[index] ?? "")) index++;
+  };
   const fail = (message: string): never => {
-    throw new Error(`${message} at meta character ${index + 1}`)
-  }
+    throw new Error(`${message} at meta character ${index + 1}`);
+  };
   const readString = () => {
-    const delimiter = literal[index++]!
-    let escapedString = false
+    const delimiter = literal[index++]!;
+    let escapedString = false;
     while (index < literal.length) {
-      const char = literal[index++]!
-      if (escapedString) escapedString = false
-      else if (char === "\\") escapedString = true
-      else if (char === delimiter) return
+      const char = literal[index++]!;
+      if (escapedString) escapedString = false;
+      else if (char === "\\") escapedString = true;
+      else if (char === delimiter) return;
     }
-    fail("meta contains an unterminated string")
-  }
+    fail("meta contains an unterminated string");
+  };
   const readIdentifier = () => {
-    const match = literal.slice(index).match(/^[A-Za-z_$][A-Za-z0-9_$]*/)
-    const identifier = match?.[0]
-    if (!identifier) throw new Error(`meta expected an identifier at meta character ${index + 1}`)
-    index += identifier.length
-    return identifier
-  }
+    const match = literal.slice(index).match(/^[A-Za-z_$][A-Za-z0-9_$]*/);
+    const identifier = match?.[0];
+    if (!identifier)
+      throw new Error(
+        `meta expected an identifier at meta character ${index + 1}`,
+      );
+    index += identifier.length;
+    return identifier;
+  };
   const readValue = (): void => {
-    skipSpace()
-    const char = literal[index]
-    if (literal.startsWith("...", index)) fail("meta must not contain spreads")
-    if (char === "(" || char === ")") fail("meta must not contain calls or expressions")
-    if (char === "{") return readObject()
-    if (char === "[") return readArray()
-    if (char === '"' || char === "'") return readString()
-    const number = literal.slice(index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/)
+    skipSpace();
+    const char = literal[index];
+    if (literal.startsWith("...", index)) fail("meta must not contain spreads");
+    if (char === "(" || char === ")")
+      fail("meta must not contain calls or expressions");
+    if (char === "{") return readObject();
+    if (char === "[") return readArray();
+    if (char === '"' || char === "'") return readString();
+    const number = literal
+      .slice(index)
+      .match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
     if (number) {
-      index += number[0].length
-      return
+      index += number[0].length;
+      return;
     }
-    const identifier = readIdentifier()
-    skipSpace()
-    if (literal[index] === "(") fail("meta must not contain calls or expressions")
-    if (identifier !== "true" && identifier !== "false" && identifier !== "null") {
-      fail(`meta value "${identifier}" is not a literal; variables are not allowed`)
+    const identifier = readIdentifier();
+    skipSpace();
+    if (literal[index] === "(")
+      fail("meta must not contain calls or expressions");
+    if (
+      identifier !== "true" &&
+      identifier !== "false" &&
+      identifier !== "null"
+    ) {
+      fail(
+        `meta value "${identifier}" is not a literal; variables are not allowed`,
+      );
     }
-  }
+  };
   const readObject = (): void => {
-    index++
-    skipSpace()
+    index++;
+    skipSpace();
     if (literal[index] === "}") {
-      index++
-      return
+      index++;
+      return;
     }
     while (index < literal.length) {
-      skipSpace()
-      if (literal.startsWith("...", index)) fail("meta must not contain spreads")
-      if (literal[index] === '"' || literal[index] === "'") readString()
-      else readIdentifier()
-      skipSpace()
-      if (literal[index++] !== ":") fail("meta object properties require explicit values")
-      readValue()
-      skipSpace()
+      skipSpace();
+      if (literal.startsWith("...", index))
+        fail("meta must not contain spreads");
+      if (literal[index] === '"' || literal[index] === "'") readString();
+      else readIdentifier();
+      skipSpace();
+      if (literal[index++] !== ":")
+        fail("meta object properties require explicit values");
+      readValue();
+      skipSpace();
       if (literal[index] === "}") {
-        index++
-        return
+        index++;
+        return;
       }
-      if (literal[index++] !== ",") fail("meta object properties must be comma-separated")
-      skipSpace()
+      if (literal[index++] !== ",")
+        fail("meta object properties must be comma-separated");
+      skipSpace();
       if (literal[index] === "}") {
-        index++
-        return
+        index++;
+        return;
       }
     }
-    fail("meta object literal is not balanced")
-  }
+    fail("meta object literal is not balanced");
+  };
   const readArray = (): void => {
-    index++
-    skipSpace()
+    index++;
+    skipSpace();
     if (literal[index] === "]") {
-      index++
-      return
+      index++;
+      return;
     }
     while (index < literal.length) {
-      readValue()
-      skipSpace()
+      readValue();
+      skipSpace();
       if (literal[index] === "]") {
-        index++
-        return
+        index++;
+        return;
       }
-      if (literal[index++] !== ",") fail("meta array values must be comma-separated")
-      skipSpace()
+      if (literal[index++] !== ",")
+        fail("meta array values must be comma-separated");
+      skipSpace();
       if (literal[index] === "]") {
-        index++
-        return
+        index++;
+        return;
       }
     }
-    fail("meta array literal is not balanced")
-  }
+    fail("meta array literal is not balanced");
+  };
 
-  readValue()
-  skipSpace()
-  if (index !== literal.length) fail("meta contains a non-literal expression")
+  readValue();
+  skipSpace();
+  if (index !== literal.length) fail("meta contains a non-literal expression");
 
-  const meta = new Function(`return (${literal})`)() as WorkflowMeta
-  if (!meta || typeof meta !== "object" || Array.isArray(meta)) throw new Error("meta must be an object literal")
-  const keys = Object.keys(meta)
-  const unknown = keys.filter((key) => !["name", "description", "phases"].includes(key))
-  if (unknown.length > 0) throw new Error(`meta contains unsupported field(s): ${unknown.join(", ")}`)
-  if (typeof meta.name !== "string" || !meta.name.trim()) throw new Error("meta.name is required and must be a string")
+  const meta = new Function(`return (${literal})`)() as WorkflowMeta;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta))
+    throw new Error("meta must be an object literal");
+  const keys = Object.keys(meta);
+  const unknown = keys.filter(
+    (key) => !["name", "description", "phases"].includes(key),
+  );
+  if (unknown.length > 0)
+    throw new Error(
+      `meta contains unsupported field(s): ${unknown.join(", ")}`,
+    );
+  if (typeof meta.name !== "string" || !meta.name.trim())
+    throw new Error("meta.name is required and must be a string");
   if (typeof meta.description !== "string" || !meta.description.trim()) {
-    throw new Error("meta.description is required and must be a string")
+    throw new Error("meta.description is required and must be a string");
   }
   if (meta.phases !== undefined) {
-    if (!Array.isArray(meta.phases)) throw new Error("meta.phases must be an array")
+    if (!Array.isArray(meta.phases))
+      throw new Error("meta.phases must be an array");
     for (const [phaseIndex, phase] of meta.phases.entries()) {
       if (!phase || typeof phase !== "object" || Array.isArray(phase)) {
-        throw new Error(`meta.phases[${phaseIndex}] must be an object literal`)
+        throw new Error(`meta.phases[${phaseIndex}] must be an object literal`);
       }
-      const phaseKeys = Object.keys(phase)
-      const unsupported = phaseKeys.filter((key) => key !== "title" && key !== "detail")
+      const phaseKeys = Object.keys(phase);
+      const unsupported = phaseKeys.filter(
+        (key) => key !== "title" && key !== "detail",
+      );
       if (unsupported.length > 0) {
-        throw new Error(`meta.phases[${phaseIndex}] contains unsupported field(s): ${unsupported.join(", ")}`)
+        throw new Error(
+          `meta.phases[${phaseIndex}] contains unsupported field(s): ${unsupported.join(", ")}`,
+        );
       }
       if (typeof phase.title !== "string" || !phase.title.trim()) {
-        throw new Error(`meta.phases[${phaseIndex}].title is required and must be a string`)
+        throw new Error(
+          `meta.phases[${phaseIndex}].title is required and must be a string`,
+        );
       }
       if (phase.detail !== undefined && typeof phase.detail !== "string") {
-        throw new Error(`meta.phases[${phaseIndex}].detail must be a string`)
+        throw new Error(`meta.phases[${phaseIndex}].detail must be a string`);
       }
     }
   }
 
-  return { meta, executable: script.slice("export ".length) }
+  return { meta, executable: script.slice("export ".length) };
 }
 
 function parseModelSlug(slug: string): { providerID: string; modelID: string } {
-  const idx = slug.indexOf("/")
+  const idx = slug.indexOf("/");
   if (idx <= 0 || idx === slug.length - 1) {
-    throw new Error(`invalid model slug "${slug}" — expected "provider/model"`)
+    throw new Error(`invalid model slug "${slug}" — expected "provider/model"`);
   }
-  return { providerID: slug.slice(0, idx), modelID: slug.slice(idx + 1) }
+  return { providerID: slug.slice(0, idx), modelID: slug.slice(idx + 1) };
 }
 
 // ---------------------------------------------------------------------------
@@ -424,14 +490,19 @@ function statusSnapshot(run: Run) {
     scriptPath: path.join(run.dir, "script.js"),
     logs: run.logs.slice(-100),
     error: run.error ?? null,
-  }
+  };
 }
 
 function writeStatus(run: Run) {
   try {
-    fs.writeFileSync(path.join(run.dir, "status.json"), safeStringify(statusSnapshot(run), 2))
+    fs.writeFileSync(
+      path.join(run.dir, "status.json"),
+      safeStringify(statusSnapshot(run), 2),
+    );
   } catch (e) {
-    console.error(`[workflow plugin] failed to write status for ${run.id}: ${e}`)
+    console.error(
+      `[workflow plugin] failed to write status for ${run.id}: ${e}`,
+    );
   }
 }
 
@@ -440,9 +511,9 @@ function journal(run: Run, entry: Record<string, any>) {
     fs.appendFileSync(
       path.join(run.dir, "journal.jsonl"),
       JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n",
-    )
+    );
   } catch (e) {
-    console.error(`[workflow plugin] failed to journal for ${run.id}: ${e}`)
+    console.error(`[workflow plugin] failed to journal for ${run.id}: ${e}`);
   }
 }
 
@@ -450,19 +521,28 @@ function journal(run: Run, entry: Record<string, any>) {
 // Tool descriptions
 // ---------------------------------------------------------------------------
 
-function modelSection(cfg: WorkflowConfig, variantsBySlug: Map<string, string[]>): string {
+function modelSection(
+  cfg: WorkflowConfig,
+  variantsBySlug: Map<string, string[]>,
+): string {
   if (cfg.models.length === 0) {
-    return `MODEL PROFILES: no allowlist is configured, so omit opts.model and opts.variant (agents use the session default model). To enable per-agent model selection, add profiles to ~/.config/opencode/workflow.json and restart opencode.`
+    return `MODEL PROFILES: no allowlist is configured, so omit opts.model and opts.variant (agents use the session default model). To enable per-agent model selection, add profiles to ~/.config/opencode/workflow.json and restart opencode.`;
   }
   const lines = cfg.models.map((model) => {
-    const knownVariants = variantsBySlug.get(model.slug)
-    const unsupported = knownVariants && !knownVariants.includes(model.variant) ? " [unsupported variant]" : ""
-    return `  - model: "${model.slug}", variant: "${model.variant}"${unsupported}${model.note ? ` — ${model.note}` : ""}`
-  })
-  return `MODEL PROFILES — every agent() call must explicitly declare an exact model and variant pair from this list (pick deliberately per the notes; never rely on a default):\n${lines.join("\n")}\n(Profiles configured in ~/.config/opencode/workflow.json; edits require an opencode restart.)`
+    const knownVariants = variantsBySlug.get(model.slug);
+    const unsupported =
+      knownVariants && !knownVariants.includes(model.variant)
+        ? " [unsupported variant]"
+        : "";
+    return `  - model: "${model.slug}", variant: "${model.variant}"${unsupported}${model.note ? ` — ${model.note}` : ""}`;
+  });
+  return `MODEL PROFILES — every agent() call must explicitly declare an exact model and variant pair from this list (pick deliberately per the notes; never rely on a default):\n${lines.join("\n")}\n(Profiles configured in ~/.config/opencode/workflow.json; edits require an opencode restart.)`;
 }
 
-function runDescription(cfg: WorkflowConfig, variantsBySlug: Map<string, string[]>): string {
+function runDescription(
+  cfg: WorkflowConfig,
+  variantsBySlug: Map<string, string[]>,
+): string {
   return `Run a model-neutral multi-agent orchestration script in the background. Use workflow_run whenever delegation helps, including a one-off agent. It is especially useful for parallel research, reviews with adversarial verification, migrations, audits, broad sweeps, and comparing independent attempts. No user opt-in is required.
 
 HOW IT RUNS: workflow_run returns immediately with a run ID while the script continues in the background. Completion or failure will inject a synthetic message into this session. After starting a workflow, conclude the current turn with a brief progress update rather than continuing overlapping work. Do not wait, poll, or sleep; use workflow_status only when the user explicitly requests progress. A child's final output is raw workflow return data, not a user-facing response. You must synthesize the workflow result for the user. In-flight runs do not survive an opencode server restart.
@@ -577,25 +657,30 @@ COMPOSED EXHAUSTIVE-REVIEW EXAMPLE: pass files, dimensions, sweep prompts, and a
   )
   if (gaps?.dimensions?.length) confirmed.push(...(await discover(gaps.dimensions)).filter(Boolean).flat().filter(Boolean))
   log(confirmed.length + " confirmed unique findings")
-  return { confirmed, seen: seen.size }`
+  return { confirmed, seen: seen.size }`;
 }
 
-const STATUS_DESCRIPTION = `Check background workflows. Without runId, lists recent runs. With runId, returns phases, agents, recent logs, and a finished result or error. Running disk state without a live run is "interrupted" after server restart. Do not poll; completed workflows announce themselves.`
+const STATUS_DESCRIPTION = `Check background workflows. Without runId, lists recent runs. With runId, returns phases, agents, recent logs, and a finished result or error. Running disk state without a live run is "interrupted" after server restart. Do not poll; completed workflows announce themselves.`;
 
-const CANCEL_DESCRIPTION = `Cancel a running workflow. Aborts in-flight child sessions and stops new agents. Completed work remains in the journal.`
+const CANCEL_DESCRIPTION = `Cancel a running workflow. Aborts in-flight child sessions and stops new agents. Completed work remains in the journal.`;
 
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
 
-export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serverUrl }) => {
-  const cfg = loadConfig(worktree || directory)
+export const WorkflowPlugin: Plugin = async ({
+  client,
+  worktree,
+  directory,
+  serverUrl,
+}) => {
+  const cfg = loadConfig(worktree || directory);
   if (!cfg.enabled) {
-    console.error("[workflow plugin] disabled via workflow.json")
-    return {}
+    console.error("[workflow plugin] disabled via workflow.json");
+    return {};
   }
-  fs.mkdirSync(cfg.dataDir, { recursive: true })
-  const allowedModels = new Set(cfg.models.map((m) => m.slug))
+  fs.mkdirSync(cfg.dataDir, { recursive: true });
+  const allowedModels = new Set(cfg.models.map((m) => m.slug));
 
   // Discover reasoning-effort variants for allowlisted models so the tool
   // description and opts.variant validation reflect reality. Providers are
@@ -603,31 +688,40 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
   // retries; the tool.definition hook injects the enriched description once
   // available. Until then variants are undocumented and passed through
   // unvalidated.
-  const variantsBySlug = new Map<string, string[]>()
+  const variantsBySlug = new Map<string, string[]>();
   async function loadVariants() {
     for (let attempt = 1; attempt <= 12; attempt++) {
       try {
         const res = unwrap(
-          await withTimeout(client.config.providers({}) as Promise<any>, 15_000, "config.providers"),
+          await withTimeout(
+            client.config.providers({}) as Promise<any>,
+            15_000,
+            "config.providers",
+          ),
           "config.providers",
-        )
-        const providers = res?.providers ?? (Array.isArray(res) ? res : [])
+        );
+        const providers = res?.providers ?? (Array.isArray(res) ? res : []);
         for (const provider of providers) {
-          for (const [modelID, model] of Object.entries<any>(provider?.models ?? {})) {
-            const slug = `${provider.id}/${modelID}`
-            if (!allowedModels.has(slug)) continue
-            const variants = Object.keys(model?.variants ?? {})
-            if (variants.length > 0) variantsBySlug.set(slug, variants)
+          for (const [modelID, model] of Object.entries<any>(
+            provider?.models ?? {},
+          )) {
+            const slug = `${provider.id}/${modelID}`;
+            if (!allowedModels.has(slug)) continue;
+            const variants = Object.keys(model?.variants ?? {});
+            if (variants.length > 0) variantsBySlug.set(slug, variants);
           }
         }
-        return
+        return;
       } catch (e) {
-        if (attempt === 12) console.error(`[workflow plugin] could not load model variants: ${e}`)
-        await new Promise((resolve) => setTimeout(resolve, 5_000))
+        if (attempt === 12)
+          console.error(
+            `[workflow plugin] could not load model variants: ${e}`,
+          );
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
       }
     }
   }
-  void loadVariants()
+  void loadVariants();
 
   // ---------------------------------------------------------------------------
   // Inline agent cards (fork feature: POST /session/:id/agent-card).
@@ -635,59 +729,79 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
   // conversation. Feature-detected so the plugin still works on stock opencode.
   // ---------------------------------------------------------------------------
 
-  let agentCardsSupported: boolean | null = null
+  let agentCardsSupported: boolean | null = null;
 
-  type CardRef = { messageID: string; partID: string }
+  type CardRef = { messageID: string; partID: string };
 
-  async function upsertAgentCard(run: Run, body: Record<string, any>): Promise<CardRef | null> {
-    if (agentCardsSupported === false) return null
+  async function upsertAgentCard(
+    run: Run,
+    body: Record<string, any>,
+  ): Promise<CardRef | null> {
+    if (agentCardsSupported === false) return null;
     try {
-      const url = new URL(`/session/${run.callerSessionID}/agent-card`, serverUrl)
-      url.searchParams.set("directory", run.directory)
+      const url = new URL(
+        `/session/${run.callerSessionID}/agent-card`,
+        serverUrl,
+      );
+      url.searchParams.set("directory", run.directory);
       const headers: Record<string, string> = {
         "content-type": "application/json",
-      }
+      };
       if (process.env.OPENCODE_SERVER_PASSWORD) {
-        headers.authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`
+        headers.authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`;
       }
       const res = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
-      })
+      });
       if (res.status === 404 || res.status === 405) {
-        if (agentCardsSupported === null) journal(run, { type: "agent_card_unsupported" })
-        agentCardsSupported = false
-        return null
+        if (agentCardsSupported === null)
+          journal(run, { type: "agent_card_unsupported" });
+        agentCardsSupported = false;
+        return null;
       }
       if (!res.ok) {
         journal(run, {
           type: "agent_card_error",
           status: res.status,
           body: (await res.text()).slice(0, 300),
-        })
-        return null
+        });
+        return null;
       }
-      agentCardsSupported = true
-      return (await res.json()) as CardRef
+      agentCardsSupported = true;
+      return (await res.json()) as CardRef;
     } catch (e: any) {
       journal(run, {
         type: "agent_card_error",
         error: String(e?.message ?? e),
-      })
-      return null
+      });
+      return null;
     }
   }
 
-  async function appendExternalTranscript(run: Run, sessionID: string, body: Record<string, any>): Promise<void> {
-    const url = new URL(`/session/${sessionID}/external-transcript`, serverUrl)
-    url.searchParams.set("directory", run.directory)
-    const headers: Record<string, string> = { "content-type": "application/json" }
+  async function appendExternalTranscript(
+    run: Run,
+    sessionID: string,
+    body: Record<string, any>,
+  ): Promise<void> {
+    const url = new URL(`/session/${sessionID}/external-transcript`, serverUrl);
+    url.searchParams.set("directory", run.directory);
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
     if (process.env.OPENCODE_SERVER_PASSWORD) {
-      headers.authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`
+      headers.authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`;
     }
-    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) })
-    if (!res.ok) throw new Error(`external transcript failed (${res.status}): ${(await res.text()).slice(0, 300)}`)
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok)
+      throw new Error(
+        `external transcript failed (${res.status}): ${(await res.text()).slice(0, 300)}`,
+      );
   }
 
   // Phase progress cards: one card per declared phase, pending upfront, running
@@ -695,29 +809,39 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
 
   function phaseStatus(run: Run, phase: PhaseState, final: boolean): string {
     if (phase.started === 0) {
-      if (!final) return "pending"
-      return run.status === "completed" ? "skipped" : "pending"
+      if (!final) return "pending";
+      return run.status === "completed" ? "skipped" : "pending";
     }
-    const settled = phase.finished + phase.failed >= phase.started
-    if (!settled) return final ? (run.status === "completed" ? "completed" : "error") : "running"
-    return phase.failed > 0 && phase.finished === 0 ? "error" : "completed"
+    const settled = phase.finished + phase.failed >= phase.started;
+    if (!settled)
+      return final
+        ? run.status === "completed"
+          ? "completed"
+          : "error"
+        : "running";
+    return phase.failed > 0 && phase.finished === 0 ? "error" : "completed";
   }
 
   function runCardBody(run: Run, final = false) {
     // The fork's existing card payload calls phases "steps"; keep that wire key
     // while the workflow script API consistently uses phase terminology.
     const steps = run.phases?.map((phase) => {
-      const status = phaseStatus(run, phase, final)
+      const status = phaseStatus(run, phase, final);
       return {
         title: phase.title,
         detail: phase.detail,
         status,
         model: phase.models.length > 0 ? phase.models.join(", ") : undefined,
         agents: run.agentRows.filter((row) => row.phase === phase.title),
-      }
-    })
-    const status = run.status === "running" ? "running" : run.status === "completed" ? "completed" : "error"
-    const summary = `${run.agentsCompleted} agent(s) completed${run.agentsFailed ? `, ${run.agentsFailed} failed` : ""}`
+      };
+    });
+    const status =
+      run.status === "running"
+        ? "running"
+        : run.status === "completed"
+          ? "completed"
+          : "error";
+    const summary = `${run.agentsCompleted} agent(s) completed${run.agentsFailed ? `, ${run.agentsFailed} failed` : ""}`;
     return {
       tool: "workflow",
       description: run.name,
@@ -725,7 +849,9 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
       prompt: run.name,
       status,
       ...(status === "completed" ? { output: summary } : {}),
-      ...(status === "error" ? { error: (run.error ?? `workflow ${run.status}`).slice(0, 500) } : {}),
+      ...(status === "error"
+        ? { error: (run.error ?? `workflow ${run.status}`).slice(0, 500) }
+        : {}),
       metadata: {
         uiOnly: true,
         workflow: {
@@ -737,30 +863,32 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         },
       },
       ...(run.card ?? {}),
-    }
+    };
   }
 
   function pushRunCard(run: Run, final = false) {
     run.cardQueue = run.cardQueue
       .then(async () => {
-        const ref = await upsertAgentCard(run, runCardBody(run, final))
-        if (ref && !run.card) run.card = ref
+        const ref = await upsertAgentCard(run, runCardBody(run, final));
+        if (ref && !run.card) run.card = ref;
       })
-      .catch(() => {})
-    return run.cardQueue
+      .catch(() => {});
+    return run.cardQueue;
   }
 
   function resolvePhase(run: Run, opts: AgentOpts): PhaseState | null {
-    const name = opts.phase ?? run.currentPhase
-    if (!run.phases || !name) return null
-    const found = run.phases.find((phase) => phase.title.toLowerCase() === String(name).toLowerCase())
+    const name = opts.phase ?? run.currentPhase;
+    if (!run.phases || !name) return null;
+    const found = run.phases.find(
+      (phase) => phase.title.toLowerCase() === String(name).toLowerCase(),
+    );
     if (!found)
       journal(run, {
         type: "unknown_phase",
         phase: name,
         known: run.phases.map((phase) => phase.title),
-      })
-    return found ?? null
+      });
+    return found ?? null;
   }
 
   // -------------------------------------------------------------------------
@@ -770,56 +898,85 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
   class WorkflowCancelledError extends Error {}
   class AgentTimeoutError extends Error {}
 
-  async function runAgent(run: Run, semaphore: Semaphore, prompt: string, opts: AgentOpts = {}): Promise<any> {
-    const startedAt = Date.now()
-    const label = opts.label ?? (typeof prompt === "string" ? prompt.replace(/\s+/g, " ").slice(0, 60) : "agent")
-    let phase: PhaseState | null = null
-    let sessionID: string | undefined
-    let activeAgentID: string | undefined
-    let row: AgentRow | null = null
-    let control: AgentControl | undefined
-    let release: (() => void) | undefined
+  async function runAgent(
+    run: Run,
+    semaphore: Semaphore,
+    prompt: string,
+    opts: AgentOpts = {},
+  ): Promise<any> {
+    const startedAt = Date.now();
+    const label =
+      opts.label ??
+      (typeof prompt === "string"
+        ? prompt.replace(/\s+/g, " ").slice(0, 60)
+        : "agent");
+    let phase: PhaseState | null = null;
+    let sessionID: string | undefined;
+    let activeAgentID: string | undefined;
+    let row: AgentRow | null = null;
+    let control: AgentControl | undefined;
+    let release: (() => void) | undefined;
     try {
-      if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
+      if (run.cancelled)
+        throw new WorkflowCancelledError("workflow was cancelled");
       if (typeof prompt !== "string" || prompt.trim() === "") {
-        throw new Error("agent(prompt) requires a non-empty string prompt")
+        throw new Error("agent(prompt) requires a non-empty string prompt");
       }
-      phase = resolvePhase(run, opts)
+      phase = resolvePhase(run, opts);
       if (cfg.models.length > 0) {
         if (!opts.model) {
-          const profiles = cfg.models.map((profile) => `${profile.slug} (${profile.variant})`).join(", ")
-          throw new Error(`agent("${prompt.slice(0, 40)}...") is missing opts.model; choose from: ${profiles}`)
+          const profiles = cfg.models
+            .map((profile) => `${profile.slug} (${profile.variant})`)
+            .join(", ");
+          throw new Error(
+            `agent("${prompt.slice(0, 40)}...") is missing opts.model; choose from: ${profiles}`,
+          );
         }
-        if (!opts.variant) throw new Error(`agent("${prompt.slice(0, 40)}...") is missing opts.variant`)
+        if (!opts.variant)
+          throw new Error(
+            `agent("${prompt.slice(0, 40)}...") is missing opts.variant`,
+          );
         const configuredProfile = cfg.models.some(
-          (profile) => profile.slug === opts.model && profile.variant === opts.variant,
-        )
+          (profile) =>
+            profile.slug === opts.model && profile.variant === opts.variant,
+        );
         if (!configuredProfile) {
-          const profiles = cfg.models.map((profile) => `${profile.slug} (${profile.variant})`).join(", ")
-          throw new Error(`model profile "${opts.model} (${opts.variant})" is not configured; choose from: ${profiles}`)
+          const profiles = cfg.models
+            .map((profile) => `${profile.slug} (${profile.variant})`)
+            .join(", ");
+          throw new Error(
+            `model profile "${opts.model} (${opts.variant})" is not configured; choose from: ${profiles}`,
+          );
         }
       } else if (opts.model || opts.variant) {
-        throw new Error("no model profiles are configured; omit opts.model and opts.variant to use the session default")
+        throw new Error(
+          "no model profiles are configured; omit opts.model and opts.variant to use the session default",
+        );
       }
       if (opts.variant && opts.model) {
-        const known = variantsBySlug.get(opts.model)
+        const known = variantsBySlug.get(opts.model);
         if (known && !known.includes(opts.variant)) {
-          throw new Error(`variant "${opts.variant}" is not supported by ${opts.model}; supported: ${known.join(", ")}`)
+          throw new Error(
+            `variant "${opts.variant}" is not supported by ${opts.model}; supported: ${known.join(", ")}`,
+          );
         }
       }
-      const useClaudeCli = isClaudeCliModel(opts.model)
-      const model = opts.model && !useClaudeCli ? parseModelSlug(opts.model) : undefined
-      const modelLabel = opts.model ? `${opts.model} (${opts.variant})` : "session default"
+      const useClaudeCli = isClaudeCliModel(opts.model);
+      const model =
+        opts.model && !useClaudeCli ? parseModelSlug(opts.model) : undefined;
+      const modelLabel = opts.model
+        ? `${opts.model} (${opts.variant})`
+        : "session default";
 
       if (run.agentsSpawned >= cfg.maxAgentsPerRun) {
-        throw new Error(`agent cap reached (${cfg.maxAgentsPerRun} per run)`)
+        throw new Error(`agent cap reached (${cfg.maxAgentsPerRun} per run)`);
       }
-      run.agentsSpawned++
-      writeStatus(run)
-      release = await semaphore.acquire()
+      run.agentsSpawned++;
+      writeStatus(run);
+      release = await semaphore.acquire();
       if (run.cancelled) {
-        release()
-        throw new WorkflowCancelledError("workflow was cancelled")
+        release();
+        throw new WorkflowCancelledError("workflow was cancelled");
       }
       const session = unwrap(
         await client.session.create({
@@ -846,63 +1003,76 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           query: { directory: run.directory },
         }),
         "session.create",
-      )
-      sessionID = session?.id
-      if (!sessionID) throw new Error(`session.create returned no id: ${safeStringify(session).slice(0, 300)}`)
-      run.activeSessions.add(sessionID)
-      activeAgentID = sessionID
+      );
+      sessionID = session?.id;
+      if (!sessionID)
+        throw new Error(
+          `session.create returned no id: ${safeStringify(session).slice(0, 300)}`,
+        );
+      run.activeSessions.add(sessionID);
+      activeAgentID = sessionID;
       row = {
         label,
         model: modelLabel,
         status: "running",
         sessionID,
         phase: phase?.title,
-      }
-      run.agentRows.push(row)
+      };
+      run.agentRows.push(row);
       if (phase) {
-        phase.started++
-        if (!phase.models.includes(modelLabel)) phase.models.push(modelLabel)
+        phase.started++;
+        if (!phase.models.includes(modelLabel)) phase.models.push(modelLabel);
       }
       const agentControl: AgentControl = {
         release,
         timedOut: false,
-      }
-      control = agentControl
-      run.activeAgents.set(activeAgentID, agentControl)
-      pushRunCard(run)
+      };
+      control = agentControl;
+      run.activeAgents.set(activeAgentID, agentControl);
+      pushRunCard(run);
 
-      if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
+      if (run.cancelled)
+        throw new WorkflowCancelledError("workflow was cancelled");
       const timeout = new Promise<never>((_, reject) => {
         agentControl.timer = setTimeout(() => {
-          agentControl.timer = undefined
-          agentControl.timedOut = true
+          agentControl.timer = undefined;
+          agentControl.timedOut = true;
           journal(run, {
             type: "agent_timeout",
             label,
             sessionID,
             timeoutMs: cfg.agentTimeoutMs,
-          })
-          writeStatus(run)
-          agentControl.abort?.()
-          reject(new AgentTimeoutError(`agent "${label}" timed out after ${cfg.agentTimeoutMs}ms`))
-        }, cfg.agentTimeoutMs)
-      })
+          });
+          writeStatus(run);
+          agentControl.abort?.();
+          reject(
+            new AgentTimeoutError(
+              `agent "${label}" timed out after ${cfg.agentTimeoutMs}ms`,
+            ),
+          );
+        }, cfg.agentTimeoutMs);
+      });
 
-      let res: any
+      let res: any;
       try {
-        const system = opts.system ? `${opts.system}\n\n${CHILD_SYSTEM}` : CHILD_SYSTEM
-        let request: Promise<any>
+        const system = opts.system
+          ? `${opts.system}\n\n${CHILD_SYSTEM}`
+          : CHILD_SYSTEM;
+        let request: Promise<any>;
         if (useClaudeCli) {
-          const providerID = "claude-cli"
-          const modelID = opts.model!.slice("claude-cli/".length)
-          let claudeSessionID: string | undefined
-          const tools = new Map<string, { tool: string; input: Record<string, any> }>()
+          const providerID = "claude-cli";
+          const modelID = opts.model!.slice("claude-cli/".length);
+          let claudeSessionID: string | undefined;
+          const tools = new Map<
+            string,
+            { tool: string; input: Record<string, any> }
+          >();
           await appendExternalTranscript(run, sessionID, {
             type: "user",
             providerID,
             modelID,
             text: prompt,
-          })
+          });
           const handle = startClaudeCliAgent({
             directory: run.directory,
             prompt,
@@ -912,36 +1082,60 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             schema: opts.schema,
             onEvent: async (event) => {
               if (event?.type === "system" && event?.subtype === "init") {
-                claudeSessionID = event.session_id
-                return
+                claudeSessionID = event.session_id;
+                return;
               }
-              if (event?.type === "assistant" && Array.isArray(event.message?.content)) {
+              if (
+                event?.type === "assistant" &&
+                Array.isArray(event.message?.content)
+              ) {
                 for (const block of event.message.content) {
-                  if (block?.type === "text" && typeof block.text === "string" && block.text) {
+                  if (
+                    block?.type === "text" &&
+                    typeof block.text === "string" &&
+                    block.text
+                  ) {
                     await appendExternalTranscript(run, sessionID!, {
                       type: "text",
                       providerID,
                       modelID,
                       claudeSessionID,
                       text: block.text,
-                    })
+                    });
                   }
-                  if (block?.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
+                  if (
+                    block?.type === "tool_use" &&
+                    typeof block.id === "string" &&
+                    typeof block.name === "string"
+                  ) {
                     tools.set(block.id, {
                       tool: block.name.toLowerCase(),
-                      input: block.input && typeof block.input === "object" ? block.input : { value: block.input },
-                    })
+                      input:
+                        block.input && typeof block.input === "object"
+                          ? block.input
+                          : { value: block.input },
+                    });
                   }
                 }
-                return
+                return;
               }
-              if (event?.type !== "user" || !Array.isArray(event.message?.content)) return
+              if (
+                event?.type !== "user" ||
+                !Array.isArray(event.message?.content)
+              )
+                return;
               for (const block of event.message.content) {
-                if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue
-                const tool = tools.get(block.tool_use_id)
-                if (!tool) continue
+                if (
+                  block?.type !== "tool_result" ||
+                  typeof block.tool_use_id !== "string"
+                )
+                  continue;
+                const tool = tools.get(block.tool_use_id);
+                if (!tool) continue;
                 const output =
-                  typeof block.content === "string" ? block.content : safeStringify(block.content ?? event.tool_use_result)
+                  typeof block.content === "string"
+                    ? block.content
+                    : safeStringify(block.content ?? event.tool_use_result);
                 await appendExternalTranscript(run, sessionID!, {
                   type: "tool",
                   providerID,
@@ -952,17 +1146,23 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
                   input: tool.input,
                   output,
                   error: block.is_error === true,
-                })
-                tools.delete(block.tool_use_id)
+                });
+                tools.delete(block.tool_use_id);
               }
             },
-          })
-          agentControl.abort = handle.abort
-          request = handle.result
+          });
+          agentControl.abort = handle.abort;
+          request = handle.result.finally(() =>
+            (
+              client.session.abort({ path: { id: sessionID! } }) as Promise<any>
+            ).catch(() => {}),
+          );
         } else {
           agentControl.abort = () => {
-            ;(client.session.abort({ path: { id: sessionID! } }) as Promise<any>).catch(() => {})
-          }
+            (
+              client.session.abort({ path: { id: sessionID! } }) as Promise<any>
+            ).catch(() => {});
+          };
           request = client.session.prompt({
             path: { id: sessionID },
             query: { directory: run.directory },
@@ -987,28 +1187,42 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
                 workflow_cancel: false,
               },
             },
-          } as any) as Promise<any>
+          } as any) as Promise<any>;
         }
-        res = unwrap(await Promise.race([request, timeout]), useClaudeCli ? "claude -p" : "session.prompt")
+        res = unwrap(
+          await Promise.race([request, timeout]),
+          useClaudeCli ? "claude -p" : "session.prompt",
+        );
       } catch (error) {
-        if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
+        if (run.cancelled)
+          throw new WorkflowCancelledError("workflow was cancelled");
         if (agentControl.timedOut && !(error instanceof AgentTimeoutError)) {
-          throw new AgentTimeoutError(`agent "${label}" timed out after ${cfg.agentTimeoutMs}ms`)
+          throw new AgentTimeoutError(
+            `agent "${label}" timed out after ${cfg.agentTimeoutMs}ms`,
+          );
         }
-        throw error
+        throw error;
       } finally {
-        clearTimeout(agentControl.timer)
-        agentControl.timer = undefined
+        clearTimeout(agentControl.timer);
+        agentControl.timer = undefined;
       }
 
-      if (run.cancelled) throw new WorkflowCancelledError("workflow was cancelled")
-      const responseError = useClaudeCli ? undefined : res?.info?.error
-      if (responseError) throw new Error(`agent response failed: ${safeStringify(responseError).slice(0, 500)}`)
-      const result = useClaudeCli ? res : opts.schema ? res?.info?.structured : extractText(res?.parts)
+      if (run.cancelled)
+        throw new WorkflowCancelledError("workflow was cancelled");
+      const responseError = useClaudeCli ? undefined : res?.info?.error;
+      if (responseError)
+        throw new Error(
+          `agent response failed: ${safeStringify(responseError).slice(0, 500)}`,
+        );
+      const result = useClaudeCli
+        ? res
+        : opts.schema
+          ? res?.info?.structured
+          : extractText(res?.parts);
       if (opts.schema && result === undefined) {
-        throw new Error(`agent "${label}" returned no structured output`)
+        throw new Error(`agent "${label}" returned no structured output`);
       }
-      run.agentsCompleted++
+      run.agentsCompleted++;
       journal(run, {
         type: "agent",
         label,
@@ -1018,15 +1232,15 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         durationMs: Date.now() - startedAt,
         prompt,
         result,
-      })
-      if (phase) phase.finished++
-      row.status = "completed"
-      writeStatus(run)
-      pushRunCard(run)
-      return result
+      });
+      if (phase) phase.finished++;
+      row.status = "completed";
+      writeStatus(run);
+      pushRunCard(run);
+      return result;
     } catch (e: any) {
-      if (e instanceof WorkflowCancelledError) throw e
-      run.agentsFailed++
+      if (e instanceof WorkflowCancelledError) throw e;
+      run.agentsFailed++;
       journal(run, {
         type: "agent_error",
         label,
@@ -1034,26 +1248,30 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
         durationMs: Date.now() - startedAt,
         prompt,
         error: String(e?.message ?? e),
-      })
-      if (phase && row) phase.failed++
-      if (row) row.status = "error"
-      writeStatus(run)
-      pushRunCard(run)
-      return null
+      });
+      if (phase && row) phase.failed++;
+      if (row) row.status = "error";
+      writeStatus(run);
+      pushRunCard(run);
+      return null;
     } finally {
-      clearTimeout(control?.timer)
-      control?.release?.()
-      if (!control) release?.()
-      if (activeAgentID) run.activeAgents.delete(activeAgentID)
-      if (sessionID) run.activeSessions.delete(sessionID)
+      clearTimeout(control?.timer);
+      control?.release?.();
+      if (!control) release?.();
+      if (activeAgentID) run.activeAgents.delete(activeAgentID);
+      if (sessionID) run.activeSessions.delete(sessionID);
     }
   }
 
   function makePrimitives(run: Run) {
-    const semaphore = new Semaphore(cfg.maxConcurrency)
-    const agent = (prompt: string, opts?: AgentOpts) => runAgent(run, semaphore, prompt, opts)
+    const semaphore = new Semaphore(cfg.maxConcurrency);
+    const agent = (prompt: string, opts?: AgentOpts) =>
+      runAgent(run, semaphore, prompt, opts);
     const parallel = async (thunks: Array<() => Promise<any>>) => {
-      if (!Array.isArray(thunks)) throw new Error("parallel(thunks) requires an array of zero-arg functions")
+      if (!Array.isArray(thunks))
+        throw new Error(
+          "parallel(thunks) requires an array of zero-arg functions",
+        );
       return Promise.all(
         thunks.map(async (thunk, index) => {
           if (typeof thunk !== "function") {
@@ -1061,59 +1279,69 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
               type: "parallel_error",
               index,
               error: "item is not a function",
-            })
-            return null
+            });
+            return null;
           }
           try {
-            return await thunk()
+            return await thunk();
           } catch (e: any) {
-            if (e instanceof WorkflowCancelledError) throw e
+            if (e instanceof WorkflowCancelledError) throw e;
             journal(run, {
               type: "parallel_error",
               index,
               error: String(e?.message ?? e),
-            })
-            return null
+            });
+            return null;
           }
         }),
-      )
-    }
-    const pipeline = async (items: any[], ...stages: Array<(prev: any, item: any, index: number) => any>) => {
-      if (!Array.isArray(items)) throw new Error("pipeline(items, ...stages) requires an array of items")
-      if (stages.some((s) => typeof s !== "function")) throw new Error("pipeline stages must be functions")
+      );
+    };
+    const pipeline = async (
+      items: any[],
+      ...stages: Array<(prev: any, item: any, index: number) => any>
+    ) => {
+      if (!Array.isArray(items))
+        throw new Error(
+          "pipeline(items, ...stages) requires an array of items",
+        );
+      if (stages.some((s) => typeof s !== "function"))
+        throw new Error("pipeline stages must be functions");
       return Promise.all(
         items.map(async (item, index) => {
-          let value: any = item
+          let value: any = item;
           for (const stage of stages) {
             try {
-              value = await stage(value, item, index)
-              if (value === null) return null
+              value = await stage(value, item, index);
+              if (value === null) return null;
             } catch (e: any) {
-              if (e instanceof WorkflowCancelledError) throw e
+              if (e instanceof WorkflowCancelledError) throw e;
               journal(run, {
                 type: "pipeline_error",
                 index,
                 error: String(e?.message ?? e),
-              })
-              return null
+              });
+              return null;
             }
           }
-          return value
+          return value;
         }),
-      )
-    }
+      );
+    };
     const log = (message: any) => {
-      const line = `[${new Date().toISOString()}] ${String(message)}`
-      run.logs.push(line)
-      if (run.logs.length > 500) run.logs.splice(0, run.logs.length - 500)
-      journal(run, { type: "log", message: String(message) })
-      writeStatus(run)
-    }
-    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)))
+      const line = `[${new Date().toISOString()}] ${String(message)}`;
+      run.logs.push(line);
+      if (run.logs.length > 500) run.logs.splice(0, run.logs.length - 500);
+      journal(run, { type: "log", message: String(message) });
+      writeStatus(run);
+    };
+    const sleep = (ms: number) =>
+      new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, Number(ms) || 0)),
+      );
     const phase = (title: any) => {
-      run.currentPhase = title == null ? null : String(title)
-    }
-    return { agent, parallel, pipeline, log, sleep, phase }
+      run.currentPhase = title == null ? null : String(title);
+    };
+    return { agent, parallel, pipeline, log, sleep, phase };
   }
 
   // -------------------------------------------------------------------------
@@ -1132,93 +1360,123 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
           metadata: { workflow: { runId: run.id } },
         },
       ],
-    }
-    const path_ = { id: run.callerSessionID }
-    const query = { directory: run.directory }
+    };
+    const path_ = { id: run.callerSessionID };
+    const query = { directory: run.directory };
     try {
-      const sessionApi: any = client.session
+      const sessionApi: any = client.session;
       if (typeof sessionApi.promptAsync === "function") {
-        unwrap(await sessionApi.promptAsync({ path: path_, body, query }), "session.promptAsync")
+        unwrap(
+          await sessionApi.promptAsync({ path: path_, body, query }),
+          "session.promptAsync",
+        );
       } else {
         // Older SDKs: fall back to fire-and-forget on the blocking endpoint.
         sessionApi.prompt({ path: path_, body, query }).catch((e: any) => {
-          journal(run, { type: "wake_error", error: String(e?.message ?? e) })
-        })
+          journal(run, { type: "wake_error", error: String(e?.message ?? e) });
+        });
       }
-      journal(run, { type: "wake_sent" })
+      journal(run, { type: "wake_sent" });
     } catch (e: any) {
-      journal(run, { type: "wake_error", error: String(e?.message ?? e) })
-      console.error(`[workflow plugin] failed to wake session ${run.callerSessionID} for ${run.id}: ${e}`)
+      journal(run, { type: "wake_error", error: String(e?.message ?? e) });
+      console.error(
+        `[workflow plugin] failed to wake session ${run.callerSessionID} for ${run.id}: ${e}`,
+      );
     }
   }
 
   function completionMessage(run: Run): string {
-    const seconds = Math.round(((run.finishedAt ?? Date.now()) - run.startedAt) / 1000)
-    const header = `[workflow ${run.id} "${run.name}" ${run.status} after ${seconds}s — ${run.agentsCompleted} agents completed, ${run.agentsFailed} failed]`
-    const artifacts = `Artifacts: ${run.dir} (script.js — the orchestration script, result.json, journal.jsonl with every agent's full prompt+reply, status.json)`
+    const seconds = Math.round(
+      ((run.finishedAt ?? Date.now()) - run.startedAt) / 1000,
+    );
+    const header = `[workflow ${run.id} "${run.name}" ${run.status} after ${seconds}s — ${run.agentsCompleted} agents completed, ${run.agentsFailed} failed]`;
+    const artifacts = `Artifacts: ${run.dir} (script.js — the orchestration script, result.json, journal.jsonl with every agent's full prompt+reply, status.json)`;
     if (run.status === "completed") {
-      const resultJson = safeStringify(run.result ?? null, 2)
+      const resultJson = safeStringify(run.result ?? null, 2);
       const excerpt =
         resultJson.length > 6000
-          ? resultJson.slice(0, 6000) + "\n... (truncated — full value in result.json)"
-          : resultJson
-      return `${header}\nResult:\n${excerpt}\n${artifacts}\nThis is an automated completion notification from the workflow plugin, not a user message. Summarize this result for the user now, relating it to what they originally asked for.`
+          ? resultJson.slice(0, 6000) +
+            "\n... (truncated — full value in result.json)"
+          : resultJson;
+      return `${header}\nResult:\n${excerpt}\n${artifacts}\nThis is an automated completion notification from the workflow plugin, not a user message. Summarize this result for the user now, relating it to what they originally asked for.`;
     }
-    return `${header}\nError: ${run.error ?? "unknown"}\n${artifacts}\nThis is an automated failure notification from the workflow plugin, not a user message. Inspect the journal if needed, tell the user what happened, and decide whether to retry with a corrected script.`
+    return `${header}\nError: ${run.error ?? "unknown"}\n${artifacts}\nThis is an automated failure notification from the workflow plugin, not a user message. Inspect the journal if needed, tell the user what happened, and decide whether to retry with a corrected script.`;
   }
 
   async function executeRun(run: Run, script: string, args: any) {
-    const { agent, parallel, pipeline, log, sleep, phase } = makePrimitives(run)
+    const { agent, parallel, pipeline, log, sleep, phase } =
+      makePrimitives(run);
     try {
       // Materialize the plan as a single workflow card (all phases pending)
       // before any work starts.
-      await pushRunCard(run)
-      const fn = new AsyncFunction(...SCRIPT_PARAMS, script)
-      const result = await fn(agent, parallel, pipeline, log, sleep, args, run.id, phase)
-      run.status = run.cancelled ? "cancelled" : "completed"
-      run.result = result
+      await pushRunCard(run);
+      const fn = new AsyncFunction(...SCRIPT_PARAMS, script);
+      const result = await fn(
+        agent,
+        parallel,
+        pipeline,
+        log,
+        sleep,
+        args,
+        run.id,
+        phase,
+      );
+      run.status = run.cancelled ? "cancelled" : "completed";
+      run.result = result;
       try {
-        fs.writeFileSync(path.join(run.dir, "result.json"), safeStringify(result ?? null, 2))
+        fs.writeFileSync(
+          path.join(run.dir, "result.json"),
+          safeStringify(result ?? null, 2),
+        );
       } catch (e) {
-        console.error(`[workflow plugin] failed to write result for ${run.id}: ${e}`)
+        console.error(
+          `[workflow plugin] failed to write result for ${run.id}: ${e}`,
+        );
       }
     } catch (e: any) {
-      run.status = run.cancelled ? "cancelled" : "failed"
-      run.error = String(e?.stack ?? e).slice(0, 4000)
+      run.status = run.cancelled ? "cancelled" : "failed";
+      run.error = String(e?.stack ?? e).slice(0, 4000);
     } finally {
-      run.finishedAt = Date.now()
-      writeStatus(run)
+      run.finishedAt = Date.now();
+      writeStatus(run);
       journal(run, {
         type: "finished",
         status: run.status,
         error: run.error ?? null,
-      })
-      await pushRunCard(run, true)
+      });
+      await pushRunCard(run, true);
       if (!run.cancelled) {
-        await wakeCaller(run, completionMessage(run))
+        await wakeCaller(run, completionMessage(run));
       }
     }
   }
 
   function listRunsFromDisk(): any[] {
-    let entries: string[] = []
+    let entries: string[] = [];
     try {
       entries = fs
         .readdirSync(cfg.dataDir)
-        .filter((name: string) => name.startsWith("workflow_") || name.startsWith("wf_"))
+        .filter(
+          (name: string) =>
+            name.startsWith("workflow_") || name.startsWith("wf_"),
+        );
     } catch {
-      return []
+      return [];
     }
     const statuses = entries
-      .map((name) => readJsonIfExists(path.join(cfg.dataDir, name, "status.json")))
-      .filter(Boolean)
+      .map((name) =>
+        readJsonIfExists(path.join(cfg.dataDir, name, "status.json")),
+      )
+      .filter(Boolean);
     for (const status of statuses) {
       if (status.status === "running" && !liveRuns.has(status.runId)) {
-        status.status = "interrupted"
+        status.status = "interrupted";
       }
     }
-    statuses.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
-    return statuses
+    statuses.sort((a, b) =>
+      String(b.startedAt).localeCompare(String(a.startedAt)),
+    );
+    return statuses;
   }
 
   // -------------------------------------------------------------------------
@@ -1226,68 +1484,77 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
   // -------------------------------------------------------------------------
 
   function cancelRun(run: Run, reason: string): number {
-    run.cancelled = true
-    const aborting = run.activeAgents.size
+    run.cancelled = true;
+    const aborting = run.activeAgents.size;
     for (const control of run.activeAgents.values()) {
-      clearTimeout(control.timer)
-      control.timer = undefined
-      control.abort?.()
-      control.release?.()
-      control.release = undefined
+      clearTimeout(control.timer);
+      control.timer = undefined;
+      control.abort?.();
+      control.release?.();
+      control.release = undefined;
     }
     journal(run, {
       type: "cancel_requested",
       reason,
       abortedAgents: aborting,
-    })
-    writeStatus(run)
-    return aborting
+    });
+    writeStatus(run);
+    return aborting;
   }
 
   return {
     // The UI's workflow-card Cancel button flips metadata.workflow.cancelRequested
     // on the card part via the public updatePart endpoint; react to that event.
     event: async ({ event }: { event: any }) => {
-      if (event?.type !== "message.part.updated") return
-      const part = event.properties?.part
-      const wf = part?.state?.metadata?.workflow
-      if (!wf?.cancelRequested || !wf.runId) return
-      const run = liveRuns.get(wf.runId)
-      if (!run || run.status !== "running" || run.cancelled) return
-      cancelRun(run, "ui cancel button")
+      if (event?.type !== "message.part.updated") return;
+      const part = event.properties?.part;
+      const wf = part?.state?.metadata?.workflow;
+      if (!wf?.cancelRequested || !wf.runId) return;
+      const run = liveRuns.get(wf.runId);
+      if (!run || run.status !== "running" || run.cancelled) return;
+      cancelRun(run, "ui cancel button");
     },
     config: async (opencodeConfig: any) => {
       const denyTask = (permission: any) => {
-        if (typeof permission === "string") return { "*": permission, task: "deny" }
-        const { task: _task, ...rest } = permission ?? {}
-        return { ...rest, task: "deny" }
-      }
+        if (typeof permission === "string")
+          return { "*": permission, task: "deny" };
+        const { task: _task, ...rest } = permission ?? {};
+        return { ...rest, task: "deny" };
+      };
 
-      opencodeConfig.permission = denyTask(opencodeConfig.permission)
+      opencodeConfig.permission = denyTask(opencodeConfig.permission);
 
       for (const agent of Object.values(opencodeConfig.agent ?? {}) as any[]) {
-        agent.permission = denyTask(agent.permission)
+        agent.permission = denyTask(agent.permission);
       }
     },
-    "experimental.chat.system.transform": async (input: { sessionID?: string }, output: { system: string[] }) => {
+    "experimental.chat.system.transform": async (
+      input: { sessionID?: string },
+      output: { system: string[] },
+    ) => {
       const isWorkflowChild = [...liveRuns.values()].some(
         (run) => input.sessionID && run.activeSessions.has(input.sessionID),
-      )
-      if (isWorkflowChild) return
+      );
+      if (isWorkflowChild) return;
       output.system.push(
         "There is no task/subagent tool. Whenever delegation or parallel work would help — including one-off explorations or single background tasks — use workflow_run, even for a single agent.",
-      )
+      );
     },
     "tool.execute.before": async (input: { tool: string }) => {
       if (input.tool === "task") {
-        throw new Error("The task/subagent tool is disabled. Use workflow_run instead.")
+        throw new Error(
+          "The task/subagent tool is disabled. Use workflow_run instead.",
+        );
       }
     },
     // Variants load in the background after startup; rebuild the description
     // each time it is sent to the LLM so it reflects the current state.
-    "tool.definition": async (input: { toolID: string }, output: { description: string }) => {
+    "tool.definition": async (
+      input: { toolID: string },
+      output: { description: string },
+    ) => {
       if (input.toolID === "workflow_run") {
-        output.description = runDescription(cfg, variantsBySlug)
+        output.description = runDescription(cfg, variantsBySlug);
       }
     },
     tool: {
@@ -1314,27 +1581,33 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             ),
         },
         async execute(toolArgs, context) {
-          if ((toolArgs.script === undefined) === (toolArgs.scriptPath === undefined)) {
-            return "Workflow was not started: provide exactly one of script or scriptPath."
+          if (
+            (toolArgs.script === undefined) ===
+            (toolArgs.scriptPath === undefined)
+          ) {
+            return "Workflow was not started: provide exactly one of script or scriptPath.";
           }
-          let source: string
+          let source: string;
           try {
             if (toolArgs.scriptPath !== undefined) {
-              const sourcePath = path.resolve(context.directory, toolArgs.scriptPath)
-              source = fs.readFileSync(sourcePath, "utf8")
+              const sourcePath = path.resolve(
+                context.directory,
+                toolArgs.scriptPath,
+              );
+              source = fs.readFileSync(sourcePath, "utf8");
             } else {
-              source = toolArgs.script!
+              source = toolArgs.script!;
             }
           } catch (e: any) {
-            return `Workflow was not started: could not read scriptPath. ${String(e?.message ?? e)}`
+            return `Workflow was not started: could not read scriptPath. ${String(e?.message ?? e)}`;
           }
 
-          let parsed: { meta: WorkflowMeta; executable: string }
+          let parsed: { meta: WorkflowMeta; executable: string };
           try {
-            parsed = parseScript(source)
-            new AsyncFunction(...SCRIPT_PARAMS, parsed.executable)
+            parsed = parseScript(source);
+            new AsyncFunction(...SCRIPT_PARAMS, parsed.executable);
           } catch (e: any) {
-            return `Script failed to compile - nothing was started. ${String(e?.message ?? e)}\nFix the script and call workflow_run again. It must begin with a pure literal export const meta = {...}, followed by plain JavaScript with no imports or TypeScript syntax.`
+            return `Script failed to compile - nothing was started. ${String(e?.message ?? e)}\nFix the script and call workflow_run again. It must begin with a pure literal export const meta = {...}, followed by plain JavaScript with no imports or TypeScript syntax.`;
           }
           const run: Run = {
             id: newRunId(),
@@ -1356,14 +1629,19 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
             agentRows: [],
             card: null,
             cardQueue: Promise.resolve(),
-          }
+          };
           // Timestamp ids can collide when runs start within the same second.
-          for (let n = 2; fs.existsSync(path.join(cfg.dataDir, run.id)) || liveRuns.has(run.id); n++) {
-            run.id = `${newRunId()}_${n}`
+          for (
+            let n = 2;
+            fs.existsSync(path.join(cfg.dataDir, run.id)) ||
+            liveRuns.has(run.id);
+            n++
+          ) {
+            run.id = `${newRunId()}_${n}`;
           }
           if (parsed.meta.phases && parsed.meta.phases.length > 0) {
             run.phases = parsed.meta.phases.map((declaredPhase) => {
-              const trimmed = declaredPhase.title.trim()
+              const trimmed = declaredPhase.title.trim();
               return {
                 title: `${trimmed[0]!.toUpperCase()}${trimmed.slice(1)}`,
                 detail: declaredPhase.detail,
@@ -1371,93 +1649,108 @@ export const WorkflowPlugin: Plugin = async ({ client, worktree, directory, serv
                 finished: 0,
                 failed: 0,
                 models: [],
-              }
-            })
+              };
+            });
           }
-          run.dir = path.join(cfg.dataDir, run.id)
-          fs.mkdirSync(run.dir, { recursive: true })
-          fs.writeFileSync(path.join(run.dir, "script.js"), source)
+          run.dir = path.join(cfg.dataDir, run.id);
+          fs.mkdirSync(run.dir, { recursive: true });
+          fs.writeFileSync(path.join(run.dir, "script.js"), source);
           if (toolArgs.args !== undefined) {
-            fs.writeFileSync(path.join(run.dir, "args.json"), safeStringify(toolArgs.args, 2))
+            fs.writeFileSync(
+              path.join(run.dir, "args.json"),
+              safeStringify(toolArgs.args, 2),
+            );
           }
-          liveRuns.set(run.id, run)
-          writeStatus(run)
+          liveRuns.set(run.id, run);
+          writeStatus(run);
           journal(run, {
             type: "started",
             name: run.name,
             description: parsed.meta.description,
             callerSessionID: run.callerSessionID,
-          })
+          });
 
           void executeRun(run, parsed.executable, toolArgs.args).catch((e) => {
-            console.error(`[workflow plugin] run ${run.id} crashed: ${e}`)
-          })
+            console.error(`[workflow plugin] run ${run.id} crashed: ${e}`);
+          });
 
           return [
             `Workflow ${run.id} ("${run.name}") started in the background.`,
             `A completion message with the result will be injected into this session when it finishes — do NOT wait, poll, or sleep; finish your turn normally.`,
             `Progress on demand: workflow_status({ runId: "${run.id}" }). Cancel: workflow_cancel({ runId: "${run.id}" }).`,
             `Artifacts (script.js, journal, status, result): ${run.dir}`,
-          ].join("\n")
+          ].join("\n");
         },
       }),
 
       workflow_status: tool({
         description: STATUS_DESCRIPTION,
         args: {
-          runId: tool.schema.string().optional().describe("Run id (workflow_...). Omit to list recent runs."),
+          runId: tool.schema
+            .string()
+            .optional()
+            .describe("Run id (workflow_...). Omit to list recent runs."),
         },
         async execute(args) {
           if (!args.runId) {
-            const statuses = listRunsFromDisk().slice(0, 15)
-            if (statuses.length === 0) return "No workflow runs found."
+            const statuses = listRunsFromDisk().slice(0, 15);
+            if (statuses.length === 0) return "No workflow runs found.";
             return statuses
               .map(
                 (s) =>
                   `${s.runId} "${s.name}" — ${s.status} (started ${s.startedAt}, agents ${s.agentsCompleted}/${s.agentsSpawned} completed, ${s.agentsFailed} failed)`,
               )
-              .join("\n")
+              .join("\n");
           }
-          const live = liveRuns.get(args.runId)
+          const live = liveRuns.get(args.runId);
           const status = live
             ? statusSnapshot(live)
-            : readJsonIfExists(path.join(cfg.dataDir, args.runId, "status.json"))
-          if (!status) return `No run found with id ${args.runId}.`
+            : readJsonIfExists(
+                path.join(cfg.dataDir, args.runId, "status.json"),
+              );
+          if (!status) return `No run found with id ${args.runId}.`;
           if (!live && status.status === "running") {
-            status.status = "interrupted"
-            status.note = "The opencode server restarted while this run was in flight."
+            status.status = "interrupted";
+            status.note =
+              "The opencode server restarted while this run was in flight.";
           }
-          const lines = [safeStringify({ ...status, logs: undefined }, 2)]
-          const logs = (status.logs ?? []).slice(-20)
-          if (logs.length > 0) lines.push(`Recent progress:\n${logs.join("\n")}`)
-          const resultPath = path.join(cfg.dataDir, args.runId, "result.json")
+          const lines = [safeStringify({ ...status, logs: undefined }, 2)];
+          const logs = (status.logs ?? []).slice(-20);
+          if (logs.length > 0)
+            lines.push(`Recent progress:\n${logs.join("\n")}`);
+          const resultPath = path.join(cfg.dataDir, args.runId, "result.json");
           if (status.status === "completed" && fs.existsSync(resultPath)) {
-            const result = fs.readFileSync(resultPath, "utf8")
+            const result = fs.readFileSync(resultPath, "utf8");
             lines.push(
               `Result:\n${result.length > 4000 ? result.slice(0, 4000) + "\n... (truncated — full value in result.json)" : result}`,
-            )
+            );
           }
-          return lines.join("\n\n")
+          return lines.join("\n\n");
         },
       }),
 
       workflow_cancel: tool({
         description: CANCEL_DESCRIPTION,
         args: {
-          runId: tool.schema.string().describe("Run id (workflow_...) to cancel."),
+          runId: tool.schema
+            .string()
+            .describe("Run id (workflow_...) to cancel."),
         },
         async execute(args) {
-          const run = liveRuns.get(args.runId)
+          const run = liveRuns.get(args.runId);
           if (!run) {
-            const status = readJsonIfExists(path.join(cfg.dataDir, args.runId, "status.json"))
-            if (!status) return `No run found with id ${args.runId}.`
-            return `Run ${args.runId} is not live (status on disk: ${status.status}) — nothing to cancel.`
+            const status = readJsonIfExists(
+              path.join(cfg.dataDir, args.runId, "status.json"),
+            );
+            if (!status) return `No run found with id ${args.runId}.`;
+            return `Run ${args.runId} is not live (status on disk: ${status.status}) — nothing to cancel.`;
           }
-          if (run.status !== "running") return `Run ${args.runId} already ${run.status}.`
-          const aborted = cancelRun(run, "workflow_cancel tool")
-          return `Cancellation requested for ${args.runId}: ${aborted} in-flight agent(s) aborted, no new agents will start. The run will settle as "cancelled" shortly (check workflow_status).`
+          if (run.status !== "running")
+            return `Run ${args.runId} already ${run.status}.`;
+          const aborted = cancelRun(run, "workflow_cancel tool");
+          return `Cancellation requested for ${args.runId}: ${aborted} in-flight agent(s) aborted, no new agents will start. The run will settle as "cancelled" shortly (check workflow_status).`;
         },
       }),
     },
-  }
-}
+  };
+};

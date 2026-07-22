@@ -13,19 +13,19 @@
       "note": "The implementer. Use for complex implementation, and larger-scale changes."
     },
     {
-      "slug": "claude-cli/fable",
-      "variant": "high",
-      "note": "The strategic planner. Use for architecture, design, strategic tradeoffs, and long-horizon planning through Claude Enterprise. Cannot make changes directly and doesn't have access to MCPs or additional tools."
-    },
-    {
-      "slug": "claude-cli/fable",
-      "variant": "low",
-      "note": "The critic. Use for code review, consistency checks, scope reduction, and bounded adversarial review through Claude Enterprise. Cannot make changes directly and doesn't have access to MCPs or additional tools."
-    },
-    {
       "slug": "openai/gpt-5.6-sol",
       "variant": "low",
-      "note": "The runner. Use for deterministic lookup, extraction, classification, formatting, scans, and most browser use. Escalate when work is ambiguous or judgment-heavy."
+      "note": "The runner. Use for deterministic lookup, extraction, classification, formatting, scans, and browser use. Escalate when work is ambiguous or judgment-heavy."
+    },
+    {
+      "slug": "claude-cli/fable",
+      "variant": "high",
+      "note": "The strategic planner. Use for architecture, design, making strategic tradeoffs, and long-horizon planning. This agent can't make changes directly and doesn't have access to MCPs or additional tools."
+    },
+    {
+      "slug": "claude-cli/fable",
+      "variant": "low",
+      "note": "The critic. Use for code review, consistency checks, scope reduction, and bounded adversarial review. This agent can't make changes directly and doesn't have access to MCPs or additional tools."
     }
   ],
   "maxConcurrency": 8,
