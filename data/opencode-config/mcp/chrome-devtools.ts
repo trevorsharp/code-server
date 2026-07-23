@@ -15,7 +15,7 @@ const ensureProxy = async () => {
   try {
     const response = await fetch(`${proxyUrl}/healthz`);
     if (response.ok) return;
-  } catch {}
+  } catch { }
 
   Bun.spawn(["bun", proxyScript], {
     stdin: "ignore",
@@ -29,7 +29,7 @@ const ensureProxy = async () => {
     try {
       const response = await fetch(`${proxyUrl}/healthz`);
       if (response.ok) return;
-    } catch {}
+    } catch { }
   }
 
   throw new Error(`Chrome DevTools proxy did not start on port ${proxyPort}`);
@@ -39,7 +39,7 @@ const pickFreePort = (): number => {
   const listener = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
-    socket: { data() {} },
+    socket: { data() { } },
   });
   const port = listener.port;
   listener.stop(true);
@@ -71,7 +71,7 @@ const register = async () => {
 const unregister = async () => {
   try {
     await fetch(instanceUrl, { method: "DELETE" });
-  } catch {}
+  } catch { }
 };
 
 await register();
@@ -89,10 +89,10 @@ const findChromium = (): string => {
 
   const candidates = existsSync(cacheDir)
     ? readdirSync(cacheDir)
-        .filter((entry) => /^chromium-\d+$/.test(entry))
-        .sort((a, b) => Number(b.split("-")[1]) - Number(a.split("-")[1]))
-        .map((entry) => join(cacheDir, entry, "chrome-linux", "chrome"))
-        .filter((path) => existsSync(path))
+      .filter((entry) => /^chromium-\d+$/.test(entry))
+      .sort((a, b) => Number(b.split("-")[1]) - Number(a.split("-")[1]))
+      .map((entry) => join(cacheDir, entry, "chrome-linux", "chrome"))
+      .filter((path) => existsSync(path))
     : [];
 
   if (candidates.length === 0) {
@@ -156,7 +156,7 @@ const child = Bun.spawn(
     "--headless",
     "--isolated",
     "--viewport",
-    "1920x911",
+    "1366x1024",
     "--chromeArg=--no-sandbox",
     "--chromeArg=--disable-dev-shm-usage",
     "--chromeArg=--no-zygote",
