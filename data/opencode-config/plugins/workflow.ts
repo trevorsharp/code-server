@@ -594,7 +594,16 @@ QUALITY PATTERNS:
 - Completeness critic: give a critic the scope and all seen results, ask what is missing, then feed its uncovered dimensions into another discovery/verification round.
 - Never impose a silent coverage cap. If the user asks for exhaustive or comprehensive work, continue to the semantic stop condition or return an explicit limitation.
 
-SCALING: follow explicit wording first. "Quick" means a small proportional fan-out and minimal verification. "Thorough," "audit," "comprehensive," or "exhaustive" means broader dimensions, independent verification, and completeness checks. When wording is silent, scale by ambiguity, risk, and scope. Keep agent counts proportional; more agents without distinct work do not improve quality.
+SCALING: use a workflow size that provides a material advantage over the main agent working directly, while avoiding unnecessary scaling.
+
+- For one bounded lookup, implementation, explanation, or browser task: use just one agent.
+- A task needing independent verification: use one worker and one verifier.
+- Several genuinely independent areas: use one agent per area.
+- Use 5+ agents only when the user requests thorough or exhaustive coverage, the scope contains at least 5 independent units, or the risk justifies multiple independent perspectives.
+
+Start small and escalate only when an agent identifies concrete unresolved scope. Ambiguity alone is not a reason for parallel fan-out; use one investigator to reduce it first. Every concurrent agent must have a distinct question, artifact, area, or verification perspective. Do not create multiple agents that could reasonably receive the same prompt.
+
+Agent limits are safety ceilings, not targets.
 
 LIMITS AND RECOVERY: at most ${cfg.maxConcurrency} agents work concurrently and ${cfg.maxAgentsPerRun} may be spawned. agent(), parallel(), and pipeline() preserve terminal agent failures as null. Always inspect journal.jsonl before speculating about empty or surprising results. Every full prompt, result, failure, and transition is journaled. There is no automatic network retry. An agent request that reaches ${cfg.agentTimeoutMs}ms is aborted and settles as null; other agents continue. workflow_cancel ends a running workflow.
 
@@ -1537,7 +1546,7 @@ export const WorkflowPlugin: Plugin = async ({
       );
       if (isWorkflowChild) return;
       output.system.push(
-        "There is no task/subagent tool. Whenever delegation or parallel work would help — including one-off explorations or single background tasks — use workflow_run, even for a single agent.",
+        "There is no task/subagent tool. When delegation is useful, use workflow_run, including for a single agent.",
       );
     },
     "tool.execute.before": async (input: { tool: string }) => {
