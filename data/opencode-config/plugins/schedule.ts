@@ -45,6 +45,22 @@ type LiveJob = {
   cardQueue: Promise<void>;
 };
 
+type TriggerVerdict = {
+  shouldEscalate: boolean;
+  reason: string;
+  context: string;
+};
+
+function isTriggerVerdict(value: unknown): value is TriggerVerdict {
+  if (!value || typeof value !== "object") return false;
+  const verdict = value as Partial<TriggerVerdict>;
+  return (
+    typeof verdict.shouldEscalate === "boolean" &&
+    typeof verdict.reason === "string" &&
+    typeof verdict.context === "string"
+  );
+}
+
 type CronSpec = {
   minute: Set<number>;
   hour: Set<number>;
@@ -74,6 +90,16 @@ const TRIGGER_TIMEOUT_MS = 5 * 60 * 1000;
 const WORK_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 const liveJobs = new Map<string, LiveJob>();
+const TRIGGER_SCHEMA = {
+  type: "object",
+  properties: {
+    shouldEscalate: { type: "boolean" },
+    reason: { type: "string" },
+    context: { type: "string" },
+  },
+  required: ["shouldEscalate", "reason", "context"],
+  additionalProperties: false,
+};
 
 function readJson(file: string): any | null {
   try {
@@ -229,35 +255,6 @@ function nextOccurrence(spec: CronSpec, after: Date): Date | null {
   return null;
 }
 
-function parseVerdict(text: string): {
-  shouldEscalate: boolean;
-  reason: string;
-  context: string;
-} | null {
-  const firstBrace = text.indexOf("{");
-  const lastBrace = text.lastIndexOf("}");
-  const candidates = [
-    text,
-    firstBrace >= 0 && lastBrace > firstBrace
-      ? text.slice(firstBrace, lastBrace + 1)
-      : "",
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      const value = JSON.parse(candidate.trim());
-      if (typeof value.shouldEscalate === "boolean") {
-        return {
-          shouldEscalate: value.shouldEscalate,
-          reason: String(value.reason ?? ""),
-          context: String(value.context ?? ""),
-        };
-      }
-    } catch { }
-  }
-  return null;
-}
-
 function textFrom(parts: any[]): string {
   return (parts ?? [])
     .filter((part) => part?.type === "text" && typeof part.text === "string")
@@ -294,7 +291,7 @@ async function withTimeout<T>(
   try {
     return await Promise.race([promise, timeout]);
   } catch (error) {
-    if (String(error).includes("timed out")) await onTimeout().catch(() => { });
+    if (String(error).includes("timed out")) await onTimeout().catch(() => {});
     throw error;
   } finally {
     clearTimeout(timer);
@@ -345,14 +342,14 @@ export const SchedulePlugin: Plugin = async ({
       Boolean(job.triggerSessionID && live.sessions.has(job.triggerSessionID));
     const triggerAgents = job.triggerSessionID
       ? [
-        {
-          sessionID: job.triggerSessionID,
-          label: "Trigger",
-          model: config.triggerModel,
-          variant: config.triggerVariant,
-          status: triggerRunning ? "running" : "completed",
-        },
-      ]
+          {
+            sessionID: job.triggerSessionID,
+            label: "Trigger",
+            model: config.triggerModel,
+            variant: config.triggerVariant,
+            status: triggerRunning ? "running" : "completed",
+          },
+        ]
       : [];
     const workSessions = job.workSessions ?? [];
     return {
@@ -466,7 +463,8 @@ export const SchedulePlugin: Plugin = async ({
     timeoutMs: number,
     allowCancel = false,
     disableWorkflows = false,
-  ): Promise<string> {
+    schema?: Record<string, unknown>,
+  ): Promise<unknown> {
     const response = unwrap(
       await withTimeout(
         client.session.prompt({
@@ -476,6 +474,15 @@ export const SchedulePlugin: Plugin = async ({
             model: parseModel(model),
             variant,
             parts: [{ type: "text", text }],
+            ...(schema
+              ? {
+                  format: {
+                    type: "json_schema",
+                    schema,
+                    retryCount: 1,
+                  },
+                }
+              : {}),
             tools: {
               schedule_create: false,
               schedule_list: false,
@@ -483,10 +490,10 @@ export const SchedulePlugin: Plugin = async ({
               schedule_cancel: allowCancel,
               ...(disableWorkflows
                 ? {
-                  workflow_run: false,
-                  workflow_status: false,
-                  workflow_cancel: false,
-                }
+                    workflow_run: false,
+                    workflow_status: false,
+                    workflow_cancel: false,
+                  }
                 : {}),
             },
           },
@@ -498,14 +505,15 @@ export const SchedulePlugin: Plugin = async ({
       ),
       "session.prompt",
     );
-    return textFrom(response?.parts);
+    if (response?.info?.error) {
+      throw new Error(
+        `session response failed: ${stringify(response.info.error)}`,
+      );
+    }
+    return schema ? response?.info?.structured : textFrom(response?.parts);
   }
 
-  async function trigger(live: LiveJob): Promise<{
-    shouldEscalate: boolean;
-    reason: string;
-    context: string;
-  }> {
+  async function trigger(live: LiveJob): Promise<TriggerVerdict> {
     const job = live.job;
     let isNew = !job.triggerSessionID;
     if (job.triggerSessionID) {
@@ -529,7 +537,7 @@ export const SchedulePlugin: Plugin = async ({
         `Schedule "${job.name}" trigger`,
       );
       if (job.status !== "running") {
-        await client.session.abort({ path: { id: sessionID } }).catch(() => { });
+        await client.session.abort({ path: { id: sessionID } }).catch(() => {});
         throw new Error(`job is ${job.status}`);
       }
       job.triggerSessionID = sessionID;
@@ -540,26 +548,25 @@ export const SchedulePlugin: Plugin = async ({
     live.sessions.add(sessionID);
     pushCard(live);
     const rules =
-      'You are running as the trigger agent for a scheduled job. Your task has been defined below or in a previous message. Perform the quick checks yourself; do not use workflows or delegate to other agents. You should never track context in the file system (only keep track of context in the agent session). An escalation does not stop the schedule, so continue evaluating the task on future occurrences until the job expires or a work agent cancels it. Run or re-run any required checks and reply with only {"shouldEscalate":boolean,"reason":"One sentence of why or why not to escalate","context":"Context relevant to the escalation or empty string if not escalating"}.';
-    let message = isNew ? `${rules}\n\n${job.triggerPrompt}` : rules;
+      "You are running as the trigger agent for a scheduled job. Your task has been defined below or in a previous message. Perform the quick checks yourself; do not use workflows or delegate to other agents. You should never track context in the file system (only keep track of context in the agent session). An escalation does not stop the schedule, so continue evaluating the task on future occurrences until the job expires or a work agent cancels it. Run or re-run any required checks and return whether to escalate, one sentence explaining why or why not, and context relevant to the escalation or an empty string if not escalating.";
+    const message = isNew ? `${rules}\n\n${job.triggerPrompt}` : rules;
 
     try {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const response = await prompt(
-          job,
-          sessionID,
-          message,
-          config.triggerModel,
-          config.triggerVariant,
-          TRIGGER_TIMEOUT_MS,
-          false,
-          true,
-        );
-        const verdict = parseVerdict(response);
-        if (verdict) return verdict;
-        message = `Reply only with {"shouldEscalate":boolean,"reason":"One sentence of why or why not to escalate","context":"Context relevant to the escalation or empty string if not escalating"}.`;
+      const verdict = await prompt(
+        job,
+        sessionID,
+        message,
+        config.triggerModel,
+        config.triggerVariant,
+        TRIGGER_TIMEOUT_MS,
+        false,
+        true,
+        TRIGGER_SCHEMA,
+      );
+      if (!isTriggerVerdict(verdict)) {
+        throw new Error("trigger returned an invalid structured verdict");
       }
-      throw new Error("trigger returned an invalid verdict twice");
+      return verdict;
     } finally {
       live.sessions.delete(sessionID);
       pushCard(live);
@@ -573,7 +580,7 @@ export const SchedulePlugin: Plugin = async ({
     const job = live.job;
     const sessionID = await createSession(job, `Schedule "${job.name}" work`);
     if (job.status !== "running") {
-      await client.session.abort({ path: { id: sessionID } }).catch(() => { });
+      await client.session.abort({ path: { id: sessionID } }).catch(() => {});
       return;
     }
     job.workRunCount = (job.workRunCount ?? 0) + 1;

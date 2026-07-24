@@ -76,7 +76,7 @@ const unregister = async () => {
 
 await register();
 
-const browserContext = `The browser runs headless inside this code server's container. It has access to workspace files (file:// works) and all localhost ports. Each opencode session gets a fresh isolated browser profile. This session is ${instanceId} in the Chrome DevTools dashboard on port ${proxyPort}. The first time you use a browser tool in a session, tell the user they can monitor it from that dashboard.`;
+const browserContext = `The browser runs headless inside this code server's container. It has access to workspace files (file:// works) and all localhost ports. Each opencode session gets a fresh isolated browser profile. This browser's Chrome DevTools Protocol port is ${debugPort}.`;
 
 const installCommand = "npx playwright install chromium";
 

@@ -4,23 +4,28 @@
   "models": [
     {
       "slug": "openai/gpt-5.6-sol",
-      "variant": "medium",
-      "note": "The jack of all trades. Use for most general tasks, investigation, synthesis, and moderately complex work."
+      "variant": "high",
+      "note": "The implementer. Use for complex implementation and larger-scale changes."
     },
     {
       "slug": "openai/gpt-5.6-sol",
-      "variant": "high",
-      "note": "The implementer. Use for complex implementation, and larger-scale changes."
+      "variant": "medium",
+      "note": "The jack of all trades. Use for most general tasks and moderately complex work."
     },
     {
       "slug": "openai/gpt-5.6-sol",
       "variant": "low",
-      "note": "The runner. Use for deterministic lookup, extraction, classification, formatting, scans, and browser use. Escalate when work is ambiguous or judgment-heavy."
+      "note": "The runner. Use for deterministic lookup, extraction, classification, formatting, scans, and all browser use. Escalate when work is ambiguous or judgment-heavy. This should be the only agent to do web browser work. If there's browser use to do, instruct all other agents to pass it off to this one."
     },
     {
       "slug": "claude-cli/fable",
       "variant": "high",
       "note": "The strategic planner. Use for architecture, design, making strategic tradeoffs, and long-horizon planning. This agent can't make changes directly and doesn't have access to MCPs or additional tools."
+    },
+    {
+      "slug": "claude-cli/fable",
+      "variant": "medium",
+      "note": "The investigator. Use for in-depth code analysis. This agent can't make changes directly and doesn't have access to MCPs or additional tools."
     },
     {
       "slug": "claude-cli/fable",
