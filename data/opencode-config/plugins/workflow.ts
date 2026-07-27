@@ -20,7 +20,7 @@ import { isClaudeCliModel, startClaudeCliAgent } from "../workflow-claude-cli";
 //
 // Config (~/.config/opencode/workflow.json; project override in
 // <worktree>/.opencode/workflow.json; restart after edits):
-//   models          allowlist for agent profiles: [{slug, variant, note}] —
+//   models          allowlist for agent profiles: [{slug, name, variant, note}] —
 //                   baked into the tool description; empty = session default
 //   maxConcurrency  agents in flight per run (default 8)
 //   maxAgentsPerRun hard cap per run (default 100)
@@ -33,7 +33,12 @@ import { isClaudeCliModel, startClaudeCliAgent } from "../workflow-claude-cli";
 // endpoint; on stock opencode the plugin feature-detects and skips them.
 // ---------------------------------------------------------------------------
 
-type ModelEntry = { slug: string; variant: string; note?: string };
+type ModelEntry = {
+  slug: string;
+  name?: string;
+  variant: string;
+  note?: string;
+};
 
 type WorkflowConfig = {
   enabled: boolean;
@@ -71,6 +76,7 @@ type PhaseState = {
 type AgentRow = {
   label: string;
   model?: string;
+  modelName?: string;
   status: "running" | "completed" | "error";
   sessionID?: string;
   phase?: string;
@@ -976,6 +982,9 @@ export const WorkflowPlugin: Plugin = async ({
       const modelLabel = opts.model
         ? `${opts.model} (${opts.variant})`
         : "session default";
+      const modelName = cfg.models.find(
+        (entry) => entry.slug === opts.model && entry.variant === opts.variant,
+      )?.name;
 
       if (run.agentsSpawned >= cfg.maxAgentsPerRun) {
         throw new Error(`agent cap reached (${cfg.maxAgentsPerRun} per run)`);
@@ -1023,6 +1032,7 @@ export const WorkflowPlugin: Plugin = async ({
       row = {
         label,
         model: modelLabel,
+        ...(modelName ? { modelName } : {}),
         status: "running",
         sessionID,
         phase: phase?.title,

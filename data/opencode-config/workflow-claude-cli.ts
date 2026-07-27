@@ -42,7 +42,7 @@ export function startClaudeCliAgent(options: ClaudeCliAgentOptions): ClaudeCliAg
     "--no-session-persistence",
     "--dangerously-skip-permissions",
     "--tools",
-    "Read,Glob,Grep,Bash,WebFetch,WebSearch,StructuredOutput",
+    "Read,Glob,Grep,Edit,Write,Bash,WebFetch,WebSearch,StructuredOutput,TodoWrite,TaskCreate,TaskGet,TaskUpdate,TaskList",
     "--strict-mcp-config",
     "--mcp-config",
     '{"mcpServers":{}}',

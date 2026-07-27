@@ -1,12 +1,7 @@
 {
-  "$comment": "Config for the workflow plugin (~/.config/opencode/plugins/workflow.ts). A project can override any key via <worktree>/.opencode/workflow.json. Restart opencode after editing because model profiles are baked into the tool description at startup. 'models' is the allowlist of exact model and reasoning-variant pairs for workflow agents; each 'note' guides when to select that profile and name distinct verifier perspectives. Empty list means agents use the session default model.",
+  "$comment": "Config for the workflow plugin (~/.config/opencode/plugins/workflow.ts). A project can override any key via <worktree>/.opencode/workflow.json. Restart opencode after editing because model profiles are baked into the tool description at startup. 'models' is the allowlist of exact model and reasoning-variant pairs for workflow agents; each optional 'name' is the UI display name and each 'note' guides when to select that profile and name distinct verifier perspectives. Empty list means agents use the session default model.",
   "enabled": true,
   "models": [
-    {
-      "slug": "openai/gpt-5.6-sol",
-      "variant": "high",
-      "note": "The implementer. Use for complex implementation and larger-scale changes."
-    },
     {
       "slug": "openai/gpt-5.6-sol",
       "variant": "medium",
@@ -18,19 +13,15 @@
       "note": "The runner. Use for deterministic lookup, extraction, classification, formatting, scans, and all browser use. Escalate when work is ambiguous or judgment-heavy. This should be the only agent to do web browser work. If there's browser use to do, instruct all other agents to pass it off to this one."
     },
     {
-      "slug": "claude-cli/fable",
+      "slug": "claude-cli/claude-opus-5",
+      "name": "Opus 5",
       "variant": "high",
-      "note": "The strategic planner. Use for architecture, design, making strategic tradeoffs, and long-horizon planning. This agent can't make changes directly and doesn't have access to MCPs or additional tools."
+      "note": "The planner, implementer, and reviewer. Default to this profile for implementation, complex code changes, architecture, design, strategic tradeoffs, and long-horizon planning. This agent can read/modify files and use bash, but doesn't have access to MCPs or other advanced tools. Prompts for this profile should describe the goal without mentioning tool names because its available tools differ from the parent session."
     },
     {
-      "slug": "claude-cli/fable",
-      "variant": "medium",
-      "note": "The investigator. Use for in-depth code analysis. This agent can't make changes directly and doesn't have access to MCPs or additional tools."
-    },
-    {
-      "slug": "claude-cli/fable",
-      "variant": "low",
-      "note": "The critic. Use for code review, consistency checks, scope reduction, and bounded adversarial review. This agent can't make changes directly and doesn't have access to MCPs or additional tools."
+      "slug": "openai/gpt-5.6-sol",
+      "variant": "high",
+      "note": "The alternative reviewer. Use for secondary review in combination with another model for code reviews that need extra depth."
     }
   ],
   "maxConcurrency": 8,
