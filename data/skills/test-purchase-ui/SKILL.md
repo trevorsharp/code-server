@@ -30,6 +30,10 @@ purchase-ui.ts login --customer-id <id> --host testazure --browser-instance <ses
 
 `local` navigates to `http://localhost:3001/purchase/`. `testazure` navigates to `https://testazure.carvana.com/purchase`. Continue browser work through Chrome DevTools MCP after login.
 
+## HTTPS Testing
+
+For secure-context features such as Apple Pay, serve CheckoutUI over HTTPS on port 443 with a self-signed certificate for `localhost.carvana.com` that the test browser trusts, then test at `https://localhost.carvana.com/purchase/`.
+
 ## Feature Overrides
 
 Open `https://testazure.carvana.com/purchase` in the MCP browser. Preflight the published artifact before setting its cookies.
@@ -44,10 +48,10 @@ Run with Chrome DevTools MCP `evaluate_script`:
 
 ```js
 () => {
-  document.cookie = 'cvna-feature-enable=true; Path=/; SameSite=Lax';
-  document.cookie = `cvna-feature-name=${encodeURIComponent('<published-key>')}; Path=/; SameSite=Lax`;
-  return 'configured';
-}
+  document.cookie = "cvna-feature-enable=true; Path=/; SameSite=Lax";
+  document.cookie = `cvna-feature-name=${encodeURIComponent("<published-key>")}; Path=/; SameSite=Lax`;
+  return "configured";
+};
 ```
 
 VerificationsUI:
@@ -60,10 +64,10 @@ Run with Chrome DevTools MCP `evaluate_script`:
 
 ```js
 () => {
-  document.cookie = 'cvna-local-verifx=; Path=/; Max-Age=0; SameSite=Lax';
-  document.cookie = `cvna-verifx-feature-branch=${encodeURIComponent('<branch>')}; Path=/; SameSite=Lax`;
-  return 'configured';
-}
+  document.cookie = "cvna-local-verifx=; Path=/; Max-Age=0; SameSite=Lax";
+  document.cookie = `cvna-verifx-feature-branch=${encodeURIComponent("<branch>")}; Path=/; SameSite=Lax`;
+  return "configured";
+};
 ```
 
 Reload with cache disabled. Confirm the Checkout `index-<published-key>.html` or VerifX `assets-manifest-<branch-with-nonalphanumerics-replaced-by-hyphens>.json` request in Chrome DevTools MCP network traffic.
@@ -72,10 +76,15 @@ Clear overrides with `evaluate_script`:
 
 ```js
 () => {
-  const expire = 'Path=/; Max-Age=0; SameSite=Lax';
-  for (const name of ['cvna-feature-enable', 'cvna-feature-name', 'cvna-local-verifx', 'cvna-verifx-feature-branch']) {
+  const expire = "Path=/; Max-Age=0; SameSite=Lax";
+  for (const name of [
+    "cvna-feature-enable",
+    "cvna-feature-name",
+    "cvna-local-verifx",
+    "cvna-verifx-feature-branch",
+  ]) {
     document.cookie = `${name}=; ${expire}`;
   }
-  return 'cleared';
-}
+  return "cleared";
+};
 ```
