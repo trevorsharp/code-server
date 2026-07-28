@@ -23,6 +23,50 @@ export function isClaudeCliModel(model: string | undefined): model is string {
   return model?.startsWith(MODEL_PREFIX) === true
 }
 
+// Claude CLI reports tool inputs in snake_case; opencode's native tool renderers read camelCase.
+const TOOL_INPUT_ALIASES: Record<string, string> = {
+  file_path: "filePath",
+  notebook_path: "filePath",
+  old_string: "oldString",
+  new_string: "newString",
+  replace_all: "replaceAll",
+}
+
+export function claudeToolInput(input: unknown): Record<string, any> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return { value: input }
+  return Object.fromEntries(
+    Object.entries(input as Record<string, any>).map(([key, value]) => [TOOL_INPUT_ALIASES[key] ?? key, value]),
+  )
+}
+
+const STOP_REASONS: Record<string, string> = {
+  end_turn: "stop",
+  max_tokens: "length",
+  tool_use: "tool-calls",
+  refusal: "content-filter",
+}
+
+export function claudeSettlement(result: any): Record<string, any> {
+  const usage = result?.usage
+  return {
+    finish: STOP_REASONS[result?.stop_reason] ?? result?.stop_reason ?? "stop",
+    ...(typeof result?.total_cost_usd === "number" ? { cost: result.total_cost_usd } : {}),
+    ...(usage
+      ? {
+          tokens: {
+            input: usage.input_tokens ?? 0,
+            output: usage.output_tokens ?? 0,
+            reasoning: 0,
+            cache: {
+              read: usage.cache_read_input_tokens ?? 0,
+              write: usage.cache_creation_input_tokens ?? 0,
+            },
+          },
+        }
+      : {}),
+  }
+}
+
 export function startClaudeCliAgent(options: ClaudeCliAgentOptions): ClaudeCliAgentHandle {
   const model = options.model.slice(MODEL_PREFIX.length)
   if (!model) throw new Error(`Claude CLI model must follow ${MODEL_PREFIX}<model>`)
