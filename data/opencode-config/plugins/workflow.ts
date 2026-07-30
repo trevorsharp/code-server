@@ -465,6 +465,11 @@ function parseModelSlug(slug: string): { providerID: string; modelID: string } {
   return { providerID: slug.slice(0, idx), modelID: slug.slice(idx + 1) };
 }
 
+function sentenceCase(value: string): string {
+  const trimmed = value.trim();
+  return trimmed ? trimmed[0].toUpperCase() + trimmed.slice(1) : trimmed;
+}
+
 // ---------------------------------------------------------------------------
 // Run persistence
 // ---------------------------------------------------------------------------
@@ -551,13 +556,13 @@ function runDescription(
 
 HOW IT RUNS: workflow_run returns immediately with a run ID while the script continues in the background. Completion or failure will inject a synthetic message into this session. After starting a workflow, conclude the current turn with a brief progress update rather than continuing overlapping work. Do not wait, poll, or sleep; use workflow_status only when the user explicitly requests progress. A child's final output is raw workflow return data, not a user-facing response. You must synthesize the workflow result for the user. In-flight runs do not survive an opencode server restart.
 
-SCRIPT SOURCE: provide exactly one of \`script\` or \`scriptPath\`. A scriptPath is read fresh and copied into the new run's artifacts; this is iteration, not a saved-workflow registry. Inline scripts are also persisted as script.js. Every script must BEGIN exactly with a pure literal:
-  export const meta = { name: "review-files", description: "Review files and verify findings", phases: [{ title: "Review" }, { title: "Verify", detail: "Refute candidate findings" }] }
+SCRIPT SOURCE: provide exactly one of \`script\` or \`scriptPath\`. A scriptPath is read fresh and copied into the new run's artifacts; this is iteration, not a saved-workflow registry. Inline scripts are also persisted as script.js. Use sentence case for workflow names, phase titles, and agent labels. Every script must BEGIN exactly with a pure literal:
+  export const meta = { name: "Review files", description: "Review files and verify findings", phases: [{ title: "Review" }, { title: "Verify", detail: "Refute candidate findings" }] }
 Then write plain JavaScript forming an async function body. Metadata admits only literal data: name and description are required; phases is optional and contains {title, detail?}. Variables, calls, spreads, template literals, interpolation, and model fields are rejected. No imports or TypeScript. Workflow scripts must not use filesystem, Node APIs, fetch, or hidden globals. Return a JSON-serializable value.
 
 INJECTED PRIMITIVES:
 - await agent(prompt, opts?) -> raw text, structured data when opts.schema is set, or null after terminal failure. Each call creates a nested child session in the current project. Children cannot see this conversation or script, so prompts must be self-contained. Children inherit available session tools and MCP integrations, except task and workflow tools are disabled to prevent recursion.
-    label: short child title and journal label
+    label: short sentence-case child title and journal label
 ${
   cfg.models.length > 0
     ? `    model: REQUIRED exact slug from MODEL PROFILES
@@ -566,7 +571,7 @@ ${
     variant: omit when no profiles are configured`
 }
     system: additional child system text
-    schema: JSON Schema passed through OpenCode's native structured-output format with two retries; returns AssistantMessage.structured
+    schema: JSON Schema passed through opencode's native structured-output format with two retries; returns AssistantMessage.structured
     phase: declared meta.phases title. Prefer opts.phase inside concurrent callbacks.
 - await pipeline(items, ...stages) -> array. DEFAULT for multi-stage work. Every item advances independently through stages; item A may be verified while item B is still being discovered. Each stage receives (previousResult, originalItem, index). A failed item becomes null and skips its remaining stages.
 - await parallel(thunks) -> array. Runs zero-argument functions concurrently and waits for all. Failed thunks resolve as null.
@@ -614,7 +619,7 @@ LIMITS AND RECOVERY: at most ${cfg.maxConcurrency} agents work concurrently and 
 ${modelSection(cfg, variantsBySlug)}
 
 COMPOSED EXHAUSTIVE-REVIEW EXAMPLE: pass files, dimensions, sweep prompts, and all exact configured profiles through args. Each args.verifiers entry pairs a named perspective with a configured model and variant. Reviews stream into perspective-diverse majority refutation; independent sweeps continue until dry; a completeness critic supplies a final round.
-  export const meta = { name: "exhaustive-review", description: "Exhaustive review with adversarial verification", phases: [
+  export const meta = { name: "Exhaustive review", description: "Exhaustive review with adversarial verification", phases: [
     { title: "Discover", detail: "Dimension and multi-modal sweeps" },
     { title: "Verify", detail: "Independent refutation" },
     { title: "Complete", detail: "Find gaps and run another round" }
@@ -638,7 +643,7 @@ COMPOSED EXHAUSTIVE-REVIEW EXAMPLE: pass files, dimensions, sweep prompts, and a
     seen.set(key, finding)
     const votes = await parallel(args.verifiers.map(verifier => () => agent(
       "Try to refute this candidate from repository evidence. Perspective: " + verifier.perspective + "\\nCandidate: " + JSON.stringify(finding),
-      { label: "refute " + finding.file + ":" + finding.line + " " + verifier.perspective, phase: "Verify", model: verifier.model, variant: verifier.variant, schema: VERDICT }
+      { label: "Refute " + finding.file + ":" + finding.line + " " + verifier.perspective, phase: "Verify", model: verifier.model, variant: verifier.variant, schema: VERDICT }
     )))
     const valid = votes.filter(Boolean)
     const refutations = valid.filter(vote => vote.refuted).length
@@ -648,7 +653,7 @@ COMPOSED EXHAUSTIVE-REVIEW EXAMPLE: pass files, dimensions, sweep prompts, and a
     dimensions,
     (_, dimension) => agent(
       "Review these files only for " + dimension + ". Return concrete supported candidates: " + JSON.stringify(args.files),
-      { label: "review " + dimension, phase: "Discover", model: args.reviewer.model, variant: args.reviewer.variant, schema: FINDINGS }
+      { label: "Review " + dimension, phase: "Discover", model: args.reviewer.model, variant: args.reviewer.variant, schema: FINDINGS }
     ),
     report => parallel((report?.findings ?? []).map(finding => () => verify(finding)))
   )
@@ -658,7 +663,7 @@ COMPOSED EXHAUSTIVE-REVIEW EXAMPLE: pass files, dimensions, sweep prompts, and a
     const before = seen.size
     const sweeps = await parallel(args.sweeps.map((sweep, index) => () => agent(
       sweep + "\\nFiles: " + JSON.stringify(args.files) + "\\nAlready seen candidates: " + JSON.stringify([...seen.values()]),
-      { label: "sweep " + index, phase: "Discover", model: args.finder.model, variant: args.finder.variant, schema: FINDINGS }
+      { label: "Sweep " + index, phase: "Discover", model: args.finder.model, variant: args.finder.variant, schema: FINDINGS }
     )))
     const checked = await parallel(sweeps.filter(Boolean).flatMap(report => report.findings.map(finding => () => verify(finding))))
     confirmed.push(...checked.filter(Boolean))
@@ -666,7 +671,7 @@ COMPOSED EXHAUSTIVE-REVIEW EXAMPLE: pass files, dimensions, sweep prompts, and a
   }
   const gaps = await agent(
     "Critique completeness. Identify uncovered review dimensions from the scope and all seen candidates: " + JSON.stringify({ files: args.files, seen: [...seen.values()] }),
-    { label: "completeness", phase: "Complete", model: args.critic.model, variant: args.critic.variant, schema: GAPS }
+    { label: "Completeness", phase: "Complete", model: args.critic.model, variant: args.critic.variant, schema: GAPS }
   )
   if (gaps?.dimensions?.length) confirmed.push(...(await discover(gaps.dimensions)).filter(Boolean).flat().filter(Boolean))
   log(confirmed.length + " confirmed unique findings")
@@ -839,7 +844,7 @@ export const WorkflowPlugin: Plugin = async ({
       status,
       ...(status === "completed" ? { output: summary } : {}),
       ...(status === "error"
-        ? { error: (run.error ?? `workflow ${run.status}`).slice(0, 500) }
+        ? { error: (run.error ?? `Workflow ${run.status}`).slice(0, 500) }
         : {}),
       metadata: {
         uiOnly: true,
@@ -895,11 +900,12 @@ export const WorkflowPlugin: Plugin = async ({
     opts: AgentOpts = {},
   ): Promise<any> {
     const startedAt = Date.now();
-    const label =
+    const label = sentenceCase(
       opts.label ??
-      (typeof prompt === "string"
-        ? prompt.replace(/\s+/g, " ").slice(0, 60)
-        : "agent");
+        (typeof prompt === "string"
+          ? prompt.replace(/\s+/g, " ").slice(0, 60)
+          : "Agent"),
+    );
     let phase: PhaseState | null = null;
     let sessionID: string | undefined;
     let activeAgentID: string | undefined;
@@ -969,7 +975,7 @@ export const WorkflowPlugin: Plugin = async ({
         await client.session.create({
           body: {
             parentID: run.callerSessionID,
-            title: `${label} (@workflow subagent)`,
+            title: label,
             metadata: {
               background: true,
               parentSessionId: run.callerSessionID,
@@ -984,7 +990,7 @@ export const WorkflowPlugin: Plugin = async ({
       sessionID = session?.id;
       if (!sessionID)
         throw new Error(
-          `session.create returned no id: ${safeStringify(session).slice(0, 300)}`,
+          `session.create returned no ID: ${safeStringify(session).slice(0, 300)}`,
         );
       run.activeSessions.add(sessionID);
       activeAgentID = sessionID;
@@ -1274,7 +1280,7 @@ export const WorkflowPlugin: Plugin = async ({
     const seconds = Math.round(
       ((run.finishedAt ?? Date.now()) - run.startedAt) / 1000,
     );
-    const header = `[workflow ${run.id} "${run.name}" ${run.status} after ${seconds}s — ${run.agentsCompleted} agents completed, ${run.agentsFailed} failed]`;
+    const header = `[Workflow ${run.id} "${run.name}" ${run.status} after ${seconds}s — ${run.agentsCompleted} agents completed, ${run.agentsFailed} failed]`;
     const artifacts = `Artifacts: ${run.dir} (script.js — the orchestration script, result.json, journal.jsonl with every agent's full prompt+reply, status.json)`;
     if (run.status === "completed") {
       const resultJson = safeStringify(run.result ?? null, 2);
@@ -1492,11 +1498,11 @@ export const WorkflowPlugin: Plugin = async ({
             parsed = parseScript(source);
             new AsyncFunction(...SCRIPT_PARAMS, parsed.executable);
           } catch (e: any) {
-            return `Script failed to compile - nothing was started. ${String(e?.message ?? e)}\nFix the script and call workflow_run again. It must begin with a pure literal export const meta = {...}, followed by plain JavaScript with no imports or TypeScript syntax.`;
+            return `Script failed to compile; nothing was started. ${String(e?.message ?? e)}\nFix the script and call workflow_run again. It must begin with a pure literal export const meta = {...}, followed by plain JavaScript with no imports or TypeScript syntax.`;
           }
           const run: Run = {
             id: newRunId(),
-            name: parsed.meta.name.trim(),
+            name: sentenceCase(parsed.meta.name),
             status: "running",
             callerSessionID: context.sessionID,
             directory: context.directory,
@@ -1528,7 +1534,7 @@ export const WorkflowPlugin: Plugin = async ({
             run.phases = parsed.meta.phases.map((declaredPhase) => {
               const trimmed = declaredPhase.title.trim();
               return {
-                title: `${trimmed[0]!.toUpperCase()}${trimmed.slice(1)}`,
+                title: sentenceCase(trimmed),
                 detail: declaredPhase.detail,
                 started: 0,
                 finished: 0,
@@ -1574,7 +1580,7 @@ export const WorkflowPlugin: Plugin = async ({
           runId: tool.schema
             .string()
             .optional()
-            .describe("Run id (workflow_...). Omit to list recent runs."),
+            .describe("Run ID (workflow_...). Omit to list recent runs."),
         },
         async execute(args) {
           if (!args.runId) {
@@ -1593,7 +1599,7 @@ export const WorkflowPlugin: Plugin = async ({
             : readJsonIfExists(
                 path.join(cfg.dataDir, args.runId, "status.json"),
               );
-          if (!status) return `No run found with id ${args.runId}.`;
+          if (!status) return `No run found with ID ${args.runId}.`;
           if (!live && status.status === "running") {
             status.status = "interrupted";
             status.note =
@@ -1619,7 +1625,7 @@ export const WorkflowPlugin: Plugin = async ({
         args: {
           runId: tool.schema
             .string()
-            .describe("Run id (workflow_...) to cancel."),
+            .describe("Run ID (workflow_...) to cancel."),
         },
         async execute(args) {
           const run = liveRuns.get(args.runId);
@@ -1627,7 +1633,7 @@ export const WorkflowPlugin: Plugin = async ({
             const status = readJsonIfExists(
               path.join(cfg.dataDir, args.runId, "status.json"),
             );
-            if (!status) return `No run found with id ${args.runId}.`;
+            if (!status) return `No run found with ID ${args.runId}.`;
             return `Run ${args.runId} is not live (status on disk: ${status.status}) — nothing to cancel.`;
           }
           if (run.status !== "running")

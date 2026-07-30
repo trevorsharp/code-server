@@ -452,7 +452,7 @@ export const SchedulePlugin: Plugin = async ({
       }),
       "session.create",
     );
-    if (!session?.id) throw new Error("session.create returned no id");
+    if (!session?.id) throw new Error("session.create returned no ID");
     return session.id;
   }
 
@@ -534,10 +534,7 @@ export const SchedulePlugin: Plugin = async ({
     }
 
     if (!job.triggerSessionID) {
-      const sessionID = await createSession(
-        job,
-        `Schedule "${job.name}" trigger`,
-      );
+      const sessionID = await createSession(job, "Trigger");
       if (job.status !== "running") {
         await client.session.abort({ path: { id: sessionID } }).catch(() => {});
         throw new Error(`job is ${job.status}`);
@@ -580,15 +577,17 @@ export const SchedulePlugin: Plugin = async ({
     verdict: { reason: string; context: string },
   ): Promise<void> {
     const job = live.job;
-    const sessionID = await createSession(job, `Schedule "${job.name}" work`);
+    const workRunCount = (job.workRunCount ?? 0) + 1;
+    const label = `Work run ${workRunCount}`;
+    const sessionID = await createSession(job, label);
     if (job.status !== "running") {
       await client.session.abort({ path: { id: sessionID } }).catch(() => {});
       return;
     }
-    job.workRunCount = (job.workRunCount ?? 0) + 1;
+    job.workRunCount = workRunCount;
     const row = {
       sessionID,
-      label: `Work run ${job.workRunCount}`,
+      label,
       model: config.workModel,
       variant: config.workVariant,
       status: "running" as "running" | "completed" | "error",
@@ -789,7 +788,7 @@ export const SchedulePlugin: Plugin = async ({
             dateStyle: "medium",
             timeStyle: "long",
           }).format(first);
-          return `Created scheduled job with id: ${job.id}. The first run will be at ${firstRun}.`;
+          return `Created scheduled job with ID: ${job.id}. The first run will be at ${firstRun}.`;
         },
       }),
 
@@ -823,7 +822,7 @@ export const SchedulePlugin: Plugin = async ({
           const job = loadJobs().find(
             (candidate) => candidate.id === args.jobId,
           );
-          if (!job) return `No scheduled job found for id: ${args.jobId}.`;
+          if (!job) return `No scheduled job found for ID: ${args.jobId}.`;
           return describe(job);
         },
       }),
@@ -835,7 +834,7 @@ export const SchedulePlugin: Plugin = async ({
           const job =
             liveJobs.get(args.jobId)?.job ??
             loadJobs().find((candidate) => candidate.id === args.jobId);
-          if (!job) return `No scheduled job found for id: ${args.jobId}.`;
+          if (!job) return `No scheduled job found for ID: ${args.jobId}.`;
           if (job.status !== "running")
             return `${args.jobId} is ${job.status}.`;
           cancel(job, context.sessionID);

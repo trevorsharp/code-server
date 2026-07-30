@@ -15,12 +15,12 @@
     {
       "slug": "claude-cli/claude-fable-5",
       "variant": "high",
-      "note": "The planner and reviewer. Use for planning, architecture, design, code review, risk identification, and explicitly finding simplifications. This agent can read/modify files and use bash, but doesn't have access to MCPs or other advanced tools. Prompts for this profile should describe the goal without mentioning tool names because its available tools differ from the parent session."
+      "note": "The planner and reviewer. Use for planning, architecture, design, code review, risk identification, and explicitly finding simplifications. Prompts for this profile should describe the goal without mentioning specific tool names because its available tools may differ from the parent session."
     },
     {
       "slug": "claude-cli/claude-opus-5",
       "variant": "high",
-      "note": "The implementer. Use for implementing planned changes, refactoring, addressing review findings, and correcting problems in code it wrote. This agent can read/modify files and use bash, but doesn't have access to MCPs or other advanced tools. Prompts for this profile should describe the goal without mentioning tool names because its available tools differ from the parent session."
+      "note": "The implementer. Use for implementing planned changes, refactoring, addressing review findings, and correcting problems in code it wrote. Prompts for this profile should describe the goal without mentioning specific tool names because its available tools may differ from the parent session."
     }
   ],
   "maxConcurrency": 8,
