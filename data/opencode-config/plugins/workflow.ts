@@ -561,7 +561,7 @@ SCRIPT SOURCE: provide exactly one of \`script\` or \`scriptPath\`. A scriptPath
 Then write plain JavaScript forming an async function body. Metadata admits only literal data: name and description are required; phases is optional and contains {title, detail?}. Variables, calls, spreads, template literals, interpolation, and model fields are rejected. No imports or TypeScript. Workflow scripts must not use filesystem, Node APIs, fetch, or hidden globals. Return a JSON-serializable value.
 
 INJECTED PRIMITIVES:
-- await agent(prompt, opts?) -> raw text, structured data when opts.schema is set, or null after terminal failure. Each call creates a nested child session in the current project. Children cannot see this conversation or script, so prompts must be self-contained. Children inherit available session tools and MCP integrations, except task and workflow tools are disabled to prevent recursion.
+- await agent(prompt, opts?) -> raw text or structured data when opts.schema is set. A terminal agent failure cancels the remaining workflow and reports the failure to the parent session. Each call creates a nested child session in the current project. Children cannot see this conversation or script, so prompts must be self-contained. Children inherit available session tools and MCP integrations, except task and workflow tools are disabled to prevent recursion.
     label: short sentence-case child title and journal label
 ${
   cfg.models.length > 0
@@ -573,8 +573,8 @@ ${
     system: additional child system text
     schema: JSON Schema passed through opencode's native structured-output format with two retries; returns AssistantMessage.structured
     phase: declared meta.phases title. Prefer opts.phase inside concurrent callbacks.
-- await pipeline(items, ...stages) -> array. DEFAULT for multi-stage work. Every item advances independently through stages; item A may be verified while item B is still being discovered. Each stage receives (previousResult, originalItem, index). A failed item becomes null and skips its remaining stages.
-- await parallel(thunks) -> array. Runs zero-argument functions concurrently and waits for all. Failed thunks resolve as null.
+- await pipeline(items, ...stages) -> array. DEFAULT for multi-stage work. Every item advances independently through stages; item A may be verified while item B is still being discovered. Each stage receives (previousResult, originalItem, index).
+- await parallel(thunks) -> array. Runs zero-argument functions concurrently and waits for all.
 - phase(title): sets the default phase for later agent calls. Use only in sequential code; concurrent callbacks should use opts.phase.
 - log(message), await sleep(ms), args (the tool's JSON args), runId.
 
@@ -614,7 +614,7 @@ Start small and escalate only when an agent identifies concrete unresolved scope
 
 Agent limits are safety ceilings, not targets.
 
-LIMITS AND RECOVERY: at most ${cfg.maxConcurrency} agents work concurrently and ${cfg.maxAgentsPerRun} may be spawned. agent(), parallel(), and pipeline() preserve terminal agent failures as null. Always inspect journal.jsonl before speculating about empty or surprising results. Every full prompt, result, failure, and transition is journaled. There is no automatic network retry. An agent request that reaches ${cfg.agentTimeoutMs}ms is aborted and settles as null; other agents continue. workflow_cancel ends a running workflow.
+LIMITS AND RECOVERY: at most ${cfg.maxConcurrency} agents work concurrently and ${cfg.maxAgentsPerRun} may be spawned. A terminal agent failure or timeout cancels the workflow and its other in-flight agents. Always inspect journal.jsonl before speculating about empty or surprising results. Every full prompt, result, failure, and transition is journaled. There is no automatic network retry. An agent request that reaches ${cfg.agentTimeoutMs}ms is aborted and fails the workflow. workflow_cancel ends a running workflow.
 
 ${modelSection(cfg, variantsBySlug)}
 
@@ -891,6 +891,7 @@ export const WorkflowPlugin: Plugin = async ({
   // -------------------------------------------------------------------------
 
   class WorkflowCancelledError extends Error {}
+  class WorkflowFailedError extends Error {}
   class AgentTimeoutError extends Error {}
 
   async function runAgent(
@@ -1142,9 +1143,13 @@ export const WorkflowPlugin: Plugin = async ({
       });
       if (phase && row) phase.failed++;
       if (row) row.status = "error";
+      const error = String(e?.message ?? e);
+      run.status = "failed";
+      run.error = `Agent "${label}" failed: ${error}`;
+      cancelRun(run, run.error);
       writeStatus(run);
       pushRunCard(run);
-      return null;
+      throw new WorkflowFailedError(run.error);
     } finally {
       clearTimeout(control?.timer);
       control?.release?.();
@@ -1176,7 +1181,11 @@ export const WorkflowPlugin: Plugin = async ({
           try {
             return await thunk();
           } catch (e: any) {
-            if (e instanceof WorkflowCancelledError) throw e;
+            if (
+              e instanceof WorkflowCancelledError ||
+              e instanceof WorkflowFailedError
+            )
+              throw e;
             journal(run, {
               type: "parallel_error",
               index,
@@ -1205,7 +1214,11 @@ export const WorkflowPlugin: Plugin = async ({
               value = await stage(value, item, index);
               if (value === null) return null;
             } catch (e: any) {
-              if (e instanceof WorkflowCancelledError) throw e;
+              if (
+                e instanceof WorkflowCancelledError ||
+                e instanceof WorkflowFailedError
+              )
+                throw e;
               journal(run, {
                 type: "pipeline_error",
                 index,
@@ -1291,6 +1304,9 @@ export const WorkflowPlugin: Plugin = async ({
           : resultJson;
       return `${header}\nResult:\n${excerpt}\n${artifacts}\nThis is an automated completion notification from the workflow plugin, not a user message. Summarize this result for the user now, relating it to what they originally asked for.`;
     }
+    if (run.status === "cancelled") {
+      return `${header}\n${artifacts}\nThis is an automated cancellation notification from the workflow plugin, not a user message. Tell the user the workflow was cancelled and summarize any completed work that remains useful.`;
+    }
     return `${header}\nError: ${run.error ?? "unknown"}\n${artifacts}\nThis is an automated failure notification from the workflow plugin, not a user message. Inspect the journal if needed, tell the user what happened, and decide whether to retry with a corrected script.`;
   }
 
@@ -1312,7 +1328,12 @@ export const WorkflowPlugin: Plugin = async ({
         run.id,
         phase,
       );
-      run.status = run.cancelled ? "cancelled" : "completed";
+      run.status =
+        run.status === "failed"
+          ? "failed"
+          : run.cancelled
+            ? "cancelled"
+            : "completed";
       run.result = result;
       try {
         fs.writeFileSync(
@@ -1325,8 +1346,12 @@ export const WorkflowPlugin: Plugin = async ({
         );
       }
     } catch (e: any) {
-      run.status = run.cancelled ? "cancelled" : "failed";
-      run.error = String(e?.stack ?? e).slice(0, 4000);
+      if (run.status === "running") {
+        run.status = run.cancelled ? "cancelled" : "failed";
+      }
+      if (!run.error && !(e instanceof WorkflowCancelledError)) {
+        run.error = String(e?.message ?? e).slice(0, 4000);
+      }
     } finally {
       run.finishedAt = Date.now();
       writeStatus(run);
@@ -1336,7 +1361,7 @@ export const WorkflowPlugin: Plugin = async ({
         error: run.error ?? null,
       });
       await pushRunCard(run, true);
-      if (!run.cancelled) {
+      if (run.status !== "cancelled") {
         await wakeCaller(run, completionMessage(run));
       }
     }
