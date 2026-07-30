@@ -1,5 +1,5 @@
 {
-  "$comment": "Config for the workflow plugin (~/.config/opencode/plugins/workflow.ts). A project can override any key via <worktree>/.opencode/workflow.json. Restart opencode after editing because model profiles are baked into the tool description at startup. 'models' is the allowlist of exact model and reasoning-variant pairs for workflow agents; each optional 'name' is the UI display name and each 'note' guides when to select that profile and name distinct verifier perspectives. Empty list means agents use the session default model.",
+  "$comment": "Config for the workflow plugin (~/.config/opencode/plugins/workflow.ts). A project can override any key via <worktree>/.opencode/workflow.json. Restart opencode after editing because model profiles are baked into the tool description at startup. 'models' is the allowlist of exact model and reasoning-variant pairs for workflow agents; each optional 'note' guides when to select that profile and name distinct verifier perspectives. Empty list means agents use the session default model.",
   "enabled": true,
   "models": [
     {
@@ -14,18 +14,16 @@
     },
     {
       "slug": "claude-cli/claude-fable-5",
-      "name": "Fable 5",
       "variant": "high",
       "note": "The planner and reviewer. Use for planning, architecture, design, code review, risk identification, and explicitly finding simplifications. This agent can read/modify files and use bash, but doesn't have access to MCPs or other advanced tools. Prompts for this profile should describe the goal without mentioning tool names because its available tools differ from the parent session."
     },
     {
       "slug": "claude-cli/claude-opus-5",
-      "name": "Opus 5",
       "variant": "high",
       "note": "The implementer. Use for implementing planned changes, refactoring, addressing review findings, and correcting problems in code it wrote. This agent can read/modify files and use bash, but doesn't have access to MCPs or other advanced tools. Prompts for this profile should describe the goal without mentioning tool names because its available tools differ from the parent session."
     }
   ],
   "maxConcurrency": 8,
   "maxAgentsPerRun": 100,
-  "agentTimeoutMs": 1800000
+  "agentTimeoutMs": 3600000
 }

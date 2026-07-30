@@ -11,6 +11,7 @@ services:
     hostname: work-code-server
     environment:
       - OPENCODE_FORK=1
+      - VITE_OPEN_IN_VSCODE_URL=vscode://vscode-remote/ssh-remote+code-server
       - NOTIFY_SLACK_WEBHOOK_URL=${NOTIFY_SLACK_WEBHOOK_URL}
       - PAYMENTS_TESTING_AUTH_CLIENT_SECRET=${PAYMENTS_TESTING_AUTH_CLIENT_SECRET}
     ports:

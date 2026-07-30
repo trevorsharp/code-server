@@ -2,13 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { tool, type Plugin } from "@opencode-ai/plugin";
-import { randomUUID } from "node:crypto";
-import {
-  claudeSettlement,
-  claudeToolInput,
-  isClaudeCliModel,
-  startClaudeCliAgent,
-} from "../workflow-claude-cli";
 
 // ---------------------------------------------------------------------------
 // opencode-workflows: deterministic multi-agent orchestration for OpenCode.
@@ -41,7 +34,6 @@ import {
 
 type ModelEntry = {
   slug: string;
-  name?: string;
   variant: string;
   note?: string;
 };
@@ -82,8 +74,8 @@ type PhaseState = {
 type AgentRow = {
   label: string;
   model?: string;
-  modelName?: string;
-  status: "running" | "completed" | "error";
+  variant?: string;
+  status: "running" | "completed" | "error" | "cancelled";
   sessionID?: string;
   phase?: string;
 };
@@ -93,8 +85,6 @@ type AgentControl = {
   timer?: ReturnType<typeof setTimeout>;
   timedOut: boolean;
   abort?: () => void;
-  external?: boolean;
-  settled?: boolean;
 };
 
 type Run = {
@@ -135,7 +125,7 @@ const SCRIPT_PARAMS = [
 ];
 const META_PREFIX = "export const meta =";
 const CHILD_SYSTEM =
-  "Your final reply is raw workflow return data consumed by an orchestration script, not a message to a user. Your normal session tools and MCP integrations are available, except task and workflow tools.";
+  "Your final reply is raw workflow return data consumed by an orchestration script, not a message to a user.";
 const liveRuns = new Map<string, Run>();
 
 // ---------------------------------------------------------------------------
@@ -803,31 +793,6 @@ export const WorkflowPlugin: Plugin = async ({
     }
   }
 
-  async function appendExternalTranscript(
-    run: Run,
-    sessionID: string,
-    body: Record<string, any>,
-  ): Promise<{ messageID: string; partID?: string; aborted?: boolean }> {
-    const url = new URL(`/session/${sessionID}/external-transcript`, serverUrl);
-    url.searchParams.set("directory", run.directory);
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
-    if (process.env.OPENCODE_SERVER_PASSWORD) {
-      headers.authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`;
-    }
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
-    if (!res.ok)
-      throw new Error(
-        `external transcript failed (${res.status}): ${(await res.text()).slice(0, 300)}`,
-      );
-    return await res.json();
-  }
-
   // Phase progress cards: one card per declared phase, pending upfront, running
   // while its agents are in flight, settled with aggregate counts.
 
@@ -882,6 +847,7 @@ export const WorkflowPlugin: Plugin = async ({
           runId: run.id,
           name: run.name,
           status: run.status,
+          ...(run.error ? { error: run.error.slice(0, 500) } : {}),
           ...(steps ? { steps } : {}),
           agents: run.agentRows.filter((row) => !row.phase),
         },
@@ -985,16 +951,10 @@ export const WorkflowPlugin: Plugin = async ({
           );
         }
       }
-      const useClaudeCli = isClaudeCliModel(opts.model);
-      const model =
-        opts.model && !useClaudeCli ? parseModelSlug(opts.model) : undefined;
+      const model = opts.model ? parseModelSlug(opts.model) : undefined;
       const modelLabel = opts.model
         ? `${opts.model} (${opts.variant})`
         : "session default";
-      const modelName = cfg.models.find(
-        (entry) => entry.slug === opts.model && entry.variant === opts.variant,
-      )?.name;
-
       if (run.agentsSpawned >= cfg.maxAgentsPerRun) {
         throw new Error(`agent cap reached (${cfg.maxAgentsPerRun} per run)`);
       }
@@ -1009,23 +969,12 @@ export const WorkflowPlugin: Plugin = async ({
         await client.session.create({
           body: {
             parentID: run.callerSessionID,
-            title: `${label} (@${useClaudeCli ? "claude-cli" : "workflow"} subagent)`,
-            ...(useClaudeCli
-              ? {
-                  agent: "claude-cli",
-                  model: {
-                    providerID: "claude-cli",
-                    id: opts.model!.slice("claude-cli/".length),
-                    variant: opts.variant,
-                  },
-                }
-              : {}),
+            title: `${label} (@workflow subagent)`,
             metadata: {
               background: true,
               parentSessionId: run.callerSessionID,
               source: "workflow",
               workflowRunID: run.id,
-              ...(useClaudeCli ? { externalAgent: "claude-cli" } : {}),
             },
           } as any,
           query: { directory: run.directory },
@@ -1041,8 +990,8 @@ export const WorkflowPlugin: Plugin = async ({
       activeAgentID = sessionID;
       row = {
         label,
-        model: modelLabel,
-        ...(modelName ? { modelName } : {}),
+        model: opts.model,
+        variant: opts.variant,
         status: "running",
         sessionID,
         phase: phase?.title,
@@ -1055,7 +1004,6 @@ export const WorkflowPlugin: Plugin = async ({
       const agentControl: AgentControl = {
         release,
         timedOut: false,
-        external: useClaudeCli,
       };
       control = agentControl;
       run.activeAgents.set(activeAgentID, agentControl);
@@ -1088,200 +1036,37 @@ export const WorkflowPlugin: Plugin = async ({
         const system = opts.system
           ? `${opts.system}\n\n${CHILD_SYSTEM}`
           : CHILD_SYSTEM;
-        let request: Promise<any>;
-        if (useClaudeCli) {
-          const providerID = "claude-cli";
-          const modelID = opts.model!.slice("claude-cli/".length);
-          const runID = randomUUID();
-          let claudeSessionID: string | undefined;
-          let resultEvent: any;
-          let aborted = false;
-          const tools = new Map<
-            string,
-            { tool: string; input: Record<string, any> }
-          >();
-          // Transcript entries are cosmetic, so a failed post must never fail the agent;
-          // the finish entry releases the child session's busy status, so it retries.
-          const entry = async (body: Record<string, any>, retries = 0) => {
-            for (let attempt = 0; ; attempt++) {
-              try {
-                const result = await appendExternalTranscript(run, sessionID!, {
-                  providerID,
-                  modelID,
-                  runID,
-                  ...(claudeSessionID ? { claudeSessionID } : {}),
-                  ...body,
-                });
-                // The server settled this turn (session abort or shutdown) and ignores
-                // further entries, so stop the agent instead of running it headless.
-                if (result?.aborted) agentControl.abort?.();
-                return;
-              } catch (e: any) {
-                if (attempt >= retries) {
-                  journal(run, {
-                    type: "transcript_error",
-                    label,
-                    sessionID,
-                    entry: body.type,
-                    error: String(e?.message ?? e),
-                  });
-                  return;
-                }
-                await new Promise((resolve) =>
-                  setTimeout(resolve, 250 * (attempt + 1)),
-                );
-              }
-            }
-          };
-          await entry({ type: "user", text: prompt });
-          const handle = startClaudeCliAgent({
-            directory: run.directory,
-            prompt,
-            model: opts.model!,
-            variant: opts.variant!,
+        agentControl.abort = () => {
+          (
+            client.session.abort({ path: { id: sessionID! } }) as Promise<any>
+          ).catch(() => {});
+        };
+        const request = client.session.prompt({
+          path: { id: sessionID },
+          query: { directory: run.directory },
+          body: {
+            parts: [{ type: "text", text: prompt }],
+            ...(model ? { model } : {}),
+            ...(opts.variant ? { variant: opts.variant } : {}),
             system,
-            schema: opts.schema,
-            onEvent: async (event) => {
-              if (event?.type === "system" && event?.subtype === "init") {
-                claudeSessionID = event.session_id;
-                return;
-              }
-              if (event?.type === "result") {
-                resultEvent = event;
-                return;
-              }
-              if (
-                event?.type === "assistant" &&
-                Array.isArray(event.message?.content)
-              ) {
-                for (const block of event.message.content) {
-                  if (
-                    block?.type === "text" &&
-                    typeof block.text === "string" &&
-                    block.text
-                  ) {
-                    await entry({ type: "text", text: block.text });
-                  }
-                  if (
-                    block?.type === "thinking" &&
-                    typeof block.thinking === "string" &&
-                    block.thinking.trim()
-                  ) {
-                    await entry({ type: "reasoning", text: block.thinking });
-                  }
-                  if (
-                    block?.type === "tool_use" &&
-                    typeof block.id === "string" &&
-                    typeof block.name === "string"
-                  ) {
-                    const call = {
-                      tool: block.name.toLowerCase(),
-                      input: claudeToolInput(block.input),
-                    };
-                    tools.set(block.id, call);
-                    await entry({
-                      type: "tool",
-                      status: "running",
-                      callID: block.id,
-                      ...call,
-                    });
-                  }
+            ...(opts.schema
+              ? {
+                  format: {
+                    type: "json_schema",
+                    schema: opts.schema,
+                    retryCount: 2,
+                  },
                 }
-                return;
-              }
-              if (
-                event?.type !== "user" ||
-                !Array.isArray(event.message?.content)
-              )
-                return;
-              for (const block of event.message.content) {
-                if (
-                  block?.type !== "tool_result" ||
-                  typeof block.tool_use_id !== "string"
-                )
-                  continue;
-                const tool = tools.get(block.tool_use_id);
-                if (!tool) continue;
-                const output =
-                  typeof block.content === "string"
-                    ? block.content
-                    : safeStringify(block.content ?? event.tool_use_result);
-                await entry({
-                  type: "tool",
-                  status: block.is_error === true ? "error" : "completed",
-                  callID: block.tool_use_id,
-                  tool: tool.tool,
-                  input: tool.input,
-                  output,
-                  error: block.is_error === true,
-                });
-                tools.delete(block.tool_use_id);
-              }
+              : {}),
+            tools: {
+              task: false,
+              workflow_run: false,
+              workflow_status: false,
+              workflow_cancel: false,
             },
-          });
-          agentControl.abort = () => {
-            aborted = true;
-            handle.abort();
-          };
-          request = handle.result.then(
-            async (value) => {
-              agentControl.settled = true;
-              await entry(
-                { type: "finish", ...claudeSettlement(resultEvent) },
-                2,
-              );
-              return value;
-            },
-            async (e: any) => {
-              agentControl.settled = true;
-              await entry(
-                aborted
-                  ? { type: "finish", aborted: true }
-                  : {
-                      type: "finish",
-                      error: String(e?.message ?? e).slice(0, 500),
-                    },
-                2,
-              );
-              throw e;
-            },
-          );
-        } else {
-          agentControl.abort = () => {
-            (
-              client.session.abort({ path: { id: sessionID! } }) as Promise<any>
-            ).catch(() => {});
-          };
-          request = client.session.prompt({
-            path: { id: sessionID },
-            query: { directory: run.directory },
-            body: {
-              parts: [{ type: "text", text: prompt }],
-              ...(model ? { model } : {}),
-              ...(opts.variant ? { variant: opts.variant } : {}),
-              system,
-              ...(opts.schema
-                ? {
-                    format: {
-                      type: "json_schema",
-                      schema: opts.schema,
-                      retryCount: 2,
-                    },
-                  }
-                : {}),
-              tools: {
-                task: false,
-                workflow_run: false,
-                workflow_status: false,
-                workflow_cancel: false,
-              },
-            },
-          } as any) as Promise<any>;
-        }
-        res = unwrap(
-          await Promise.race([request, timeout]),
-          useClaudeCli ? "claude -p" : "session.prompt",
-        );
+          },
+        } as any) as Promise<any>;
+        res = unwrap(await Promise.race([request, timeout]), "session.prompt");
       } catch (error) {
         if (run.cancelled)
           throw new WorkflowCancelledError("workflow was cancelled");
@@ -1298,16 +1083,14 @@ export const WorkflowPlugin: Plugin = async ({
 
       if (run.cancelled)
         throw new WorkflowCancelledError("workflow was cancelled");
-      const responseError = useClaudeCli ? undefined : res?.info?.error;
+      const responseError = res?.info?.error;
       if (responseError)
         throw new Error(
           `agent response failed: ${safeStringify(responseError).slice(0, 500)}`,
         );
-      const result = useClaudeCli
-        ? res
-        : opts.schema
-          ? res?.info?.structured
-          : extractText(res?.parts);
+      const result = opts.schema
+        ? res?.info?.structured
+        : extractText(res?.parts);
       if (opts.schema && result === undefined) {
         throw new Error(`agent "${label}" returned no structured output`);
       }
@@ -1328,7 +1111,20 @@ export const WorkflowPlugin: Plugin = async ({
       pushRunCard(run);
       return result;
     } catch (e: any) {
-      if (e instanceof WorkflowCancelledError) throw e;
+      if (e instanceof WorkflowCancelledError) {
+        journal(run, {
+          type: "agent_cancelled",
+          label,
+          sessionID: sessionID ?? null,
+          durationMs: Date.now() - startedAt,
+          prompt,
+        });
+        if (phase && row) phase.failed++;
+        if (row) row.status = "cancelled";
+        writeStatus(run);
+        pushRunCard(run);
+        throw e;
+      }
       run.agentsFailed++;
       journal(run, {
         type: "agent_error",
@@ -1595,18 +1391,6 @@ export const WorkflowPlugin: Plugin = async ({
     // The UI's workflow-card Cancel button flips metadata.workflow.cancelRequested
     // on the card part via the public updatePart endpoint; react to that event.
     event: async ({ event }: { event: any }) => {
-      // A claude-cli child has no native runner, so the server settles its turn and goes
-      // idle when Stop is pressed; that is the signal to kill the process we own.
-      if (
-        event?.type === "session.status" &&
-        event.properties?.status?.type === "idle"
-      ) {
-        for (const run of liveRuns.values()) {
-          const control = run.activeAgents.get(event.properties.sessionID);
-          if (control?.external && !control.settled) control.abort?.();
-        }
-        return;
-      }
       if (event?.type !== "message.part.updated") return;
       const part = event.properties?.part;
       const wf = part?.state?.metadata?.workflow;

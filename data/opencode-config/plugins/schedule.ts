@@ -24,7 +24,6 @@ type Job = {
   status: "running" | "expired" | "cancelled";
   triggerSessionID?: string;
   finishedAt?: string;
-  terminalReason?: string;
   card?: { messageID: string; partID: string };
   nextFireAt?: string;
   workRunCount?: number;
@@ -338,6 +337,7 @@ export const SchedulePlugin: Plugin = async ({
   function cardBody(live: LiveJob) {
     const job = live.job;
     const triggerRunning =
+      job.status === "running" &&
       live.running &&
       Boolean(job.triggerSessionID && live.sessions.has(job.triggerSessionID));
     const triggerAgents = job.triggerSessionID
@@ -379,9 +379,11 @@ export const SchedulePlugin: Plugin = async ({
               title: "Work",
               status: workSessions.some((row) => row.status === "running")
                 ? "running"
-                : workSessions.length
-                  ? "completed"
-                  : "pending",
+                : workSessions.some((row) => row.status === "error")
+                  ? "error"
+                  : workSessions.length
+                    ? "completed"
+                    : "pending",
               agents: workSessions,
             },
           ],
@@ -616,13 +618,12 @@ export const SchedulePlugin: Plugin = async ({
     }
   }
 
-  function finish(job: Job, status: Job["status"], reason: string): void {
+  function finish(job: Job, status: Job["status"]): void {
     const live = liveJobs.get(job.id);
     if (live?.timer) clearTimeout(live.timer);
     if (live) live.timer = null;
     job.status = status;
     job.finishedAt = new Date().toISOString();
-    job.terminalReason = reason;
     delete job.nextFireAt;
     save(job);
     if (live) pushCard(live);
@@ -636,13 +637,13 @@ export const SchedulePlugin: Plugin = async ({
     const now = new Date();
     const expiresAt = new Date(job.expiresAt);
     if (now >= expiresAt) {
-      finish(job, "expired", "expiration reached");
+      finish(job, "expired");
       return;
     }
 
     const next = nextOccurrence(parseCron(job.cron), now);
     if (!next || next > expiresAt) {
-      finish(job, "expired", "no occurrence before expiration");
+      finish(job, "expired");
       return;
     }
 
@@ -697,24 +698,22 @@ export const SchedulePlugin: Plugin = async ({
         }) as Promise<any>);
       }
     }
-    finish(job, "cancelled", "cancelled by request");
+    finish(job, "cancelled");
   }
 
   for (const job of loadJobs()) {
-    if (job.status === "running" && !liveJobs.has(job.id)) start(job);
+    if (job.status !== "running" || liveJobs.has(job.id)) continue;
+    start(job);
   }
 
   const createDescription =
     "Create a scheduled job to perform ongoing or repetitive tasks or monitoring.";
 
   function describe(job: Job): string {
-    const reason = job.terminalReason
-      ? ` terminalReason=${job.terminalReason}`
-      : "";
     const triggerSession = job.triggerSessionID
       ? ` triggerSession=${job.triggerSessionID}`
       : "";
-    return `${job.id} "${job.name}" ${job.status} cron=${job.cron} expires=${job.expiresAt}${triggerSession}${reason}`;
+    return `${job.id} "${job.name}" ${job.status} cron=${job.cron} expires=${job.expiresAt}${triggerSession}`;
   }
 
   return {
@@ -816,7 +815,7 @@ export const SchedulePlugin: Plugin = async ({
 
       schedule_status: tool({
         description:
-          "Show a scheduled job's status, schedule, expiration, trigger session, and terminal reason.",
+          "Show a scheduled job's status, schedule, expiration, and trigger session.",
         args: {
           jobId: tool.schema.string(),
         },
