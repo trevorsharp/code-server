@@ -161,6 +161,7 @@ const child = Bun.spawn(
     "--chromeArg=--disable-dev-shm-usage",
     "--chromeArg=--no-zygote",
     "--chromeArg=--disable-gpu",
+    "--chromeArg=--ignore-certificate-errors",
     `--chromeArg=--remote-debugging-port=${debugPort}`,
     "--chromeArg=--remote-allow-origins=*",
     "--usageStatistics=false",

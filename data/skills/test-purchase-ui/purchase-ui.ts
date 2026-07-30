@@ -1,5 +1,10 @@
 #!/usr/bin/env bun
 
+import { spawn } from 'node:child_process';
+import { closeSync, openSync } from 'node:fs';
+import { chmod, readFile, unlink, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+
 type JsonRecord = Record<string, unknown>;
 type Options = Record<string, string | true>;
 
@@ -9,16 +14,49 @@ interface AuthCookie {
   expires?: string;
 }
 
+interface ProxyRoute {
+  path: string;
+  target: string;
+}
+
+interface ProxyState {
+  controlKey: string;
+  logFile: string;
+  pid?: number;
+  port: number;
+  proxyUrl: string;
+  routes: ProxyRoute[];
+}
+
+interface HttpsState {
+  backendRoutes: ProxyRoute[];
+  certFile: string;
+  checkoutUrl: string;
+  keyFile: string;
+  logFile: string;
+  pid?: number;
+  port: number;
+  secureUrl: string;
+}
+
 const URLS = {
   token: 'https://apps.carvanatech.com/edge/authserver/connect/token',
   pb: 'https://apps.carvanatech.com/qe/pbredux',
   authCookies: 'https://apps.carvanatech.com/oec/paymentstesting/api/v1/testazure/auth-cookies'
 };
 const CONSUMER_USER = 'trevor.sharp@carvana.com';
+const API_AUDIENCE = 'https://carvana-auth-test.azurewebsites.net/identity/resources';
+const IMPERSONATOR_USER_ID = '3d83057c-1dfa-449b-82df-82d83766f965';
 
 const HELP = `Usage:
   purchase-ui.ts stage --blueprint-id ID
-  purchase-ui.ts login --customer-id ID --host local|testazure --browser-instance ID
+  purchase-ui.ts login --customer-id ID --host local|local-https|testazure --browser-port PORT [--secure-port PORT] [--proxy-url URL] [--impersonate]
+  purchase-ui.ts proxy start --port PORT --route PATH=URL [--route PATH=URL ...]
+  purchase-ui.ts proxy status --port PORT
+  purchase-ui.ts proxy stop --port PORT
+  purchase-ui.ts https start [--port PORT] [--checkout-url URL] [--proxy-url URL]
+  purchase-ui.ts https status [--port PORT]
+  purchase-ui.ts https stop [--port PORT]
   purchase-ui.ts preflight-feature --component verifx --branch BRANCH
   purchase-ui.ts preflight-feature --component checkout --artifact-key KEY
 `;
@@ -99,6 +137,64 @@ async function authenticate(): Promise<string> {
   return token;
 }
 
+async function customerApiJwt(customerId: string, impersonate: boolean): Promise<string> {
+  const clientSecret = process.env.PAYMENTS_TESTING_AUTH_CLIENT_SECRET;
+  if (!clientSecret) throw new CliError('PAYMENTS_TESTING_AUTH_CLIENT_SECRET is required.');
+
+  let response: Response;
+  try {
+    const body = new URLSearchParams({
+      grant_type: impersonate ? 'impersonate' : 'trusted',
+      client_id: 'payments-testing',
+      client_secret: clientSecret,
+      scope: 'carvana_com',
+      id: customerId
+    });
+    if (impersonate) body.set('impersonator_id', IMPERSONATOR_USER_ID);
+
+    response = await fetch(URLS.token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(30_000)
+    });
+  } catch {
+    throw new CliError('Could not reach the TEST auth server for the customer API JWT.');
+  }
+
+  const value = record(await responseValue(response));
+  const jwt = value?.access_token;
+  if (!response.ok || typeof jwt !== 'string') {
+    throw new CliError(`Customer API JWT authentication failed with HTTP ${response.status}.`);
+  }
+
+  let payload: JsonRecord;
+  try {
+    const parts = jwt.split('.');
+    if (parts.length !== 3) throw new Error();
+    payload = record(JSON.parse(Buffer.from(parts[1], 'base64url').toString())) ?? {};
+  } catch {
+    throw new CliError('TEST auth server returned an invalid customer API JWT.');
+  }
+
+  const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+  if (!audiences.includes(API_AUDIENCE)) throw new CliError('Customer API JWT has an unexpected audience.');
+  if (payload.sub !== customerId || payload.user_id !== customerId) {
+    throw new CliError('Customer API JWT does not match the requested customer.');
+  }
+  if (
+    impersonate &&
+    (String(payload.is_impersonating).toLowerCase() !== 'true' || payload.impersonating_user !== IMPERSONATOR_USER_ID)
+  ) {
+    throw new CliError('Customer API JWT does not contain the expected impersonation claims.');
+  }
+  if (typeof payload.exp !== 'number' || payload.exp <= Math.floor(Date.now() / 1000)) {
+    throw new CliError('Customer API JWT is expired or has no expiration.');
+  }
+
+  return jwt;
+}
+
 async function serviceRequest(
   url: string,
   {
@@ -136,10 +232,10 @@ async function serviceRequest(
   return value;
 }
 
-async function authCookies(customerId: string): Promise<AuthCookie[]> {
+async function authCookies(customerId: string, impersonate: boolean): Promise<AuthCookie[]> {
   const value = await serviceRequest(URLS.authCookies, {
     method: 'POST',
-    body: { customerId, impersonate: false }
+    body: { customerId, impersonate }
   });
   if (!Array.isArray(value)) throw new CliError('PaymentsTesting returned an unexpected response.');
   const cookies = value.map(cookie => {
@@ -161,6 +257,349 @@ async function authCookies(customerId: string): Promise<AuthCookie[]> {
       value: String(cookie.value),
       ...(typeof cookie.expires === 'string' ? { expires: cookie.expires } : {})
     }));
+}
+
+function proxyPort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new CliError('Proxy port must be between 1 and 65535.', 2);
+  return port;
+}
+
+function proxyStatePath(port: number): string {
+  return `/tmp/purchase-ui-proxy-${port}.json`;
+}
+
+function httpsStatePath(port: number): string {
+  return `/tmp/purchase-ui-https-${port}.json`;
+}
+
+function processIsRunning(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readProxyState(port: number): Promise<ProxyState | null> {
+  try {
+    const state = JSON.parse(await readFile(proxyStatePath(port), 'utf8')) as ProxyState;
+    return state.port === port && typeof state.controlKey === 'string' && Array.isArray(state.routes) ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readHttpsState(port: number): Promise<HttpsState | null> {
+  try {
+    const state = JSON.parse(await readFile(httpsStatePath(port), 'utf8')) as HttpsState;
+    return state.port === port && typeof state.secureUrl === 'string' && Array.isArray(state.backendRoutes) ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+function localHttpUrl(value: string, option: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new CliError(`${option} must be a valid URL.`, 2);
+  }
+  if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', '::1'].includes(url.hostname) || url.username || url.password) {
+    throw new CliError(`${option} must be a loopback HTTP URL without credentials.`, 2);
+  }
+  return url.href.replace(/\/$/, '');
+}
+
+async function waitForHttps(secureUrl: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const process = Bun.spawn(['curl', '-skf', '--max-time', '1', `${secureUrl}/_purchase-ui-https/health`], {
+      stdout: 'ignore',
+      stderr: 'ignore'
+    });
+    if ((await process.exited) === 0) return true;
+    await Bun.sleep(100);
+  }
+  return false;
+}
+
+async function generateCertificate(port: number, keyFile: string, certFile: string): Promise<void> {
+  const process = Bun.spawn(
+    [
+      'openssl',
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-sha256',
+      '-nodes',
+      '-days',
+      '1',
+      '-subj',
+      '/CN=localhost.carvana.com',
+      '-addext',
+      'subjectAltName=DNS:localhost.carvana.com,DNS:localhost,IP:127.0.0.1',
+      '-keyout',
+      keyFile,
+      '-out',
+      certFile
+    ],
+    { stdout: 'ignore', stderr: 'ignore' }
+  );
+  if ((await process.exited) !== 0) throw new CliError(`Could not generate the HTTPS certificate for port ${port}.`);
+  await chmod(keyFile, 0o600);
+}
+
+async function startHttps(values: string[]): Promise<void> {
+  const options = parseOptions(values, ['port', 'checkoutUrl', 'proxyUrl']);
+  const port = proxyPort(options.port === true || !options.port ? '443' : options.port);
+  const existingState = await readHttpsState(port);
+  if (existingState && processIsRunning(existingState.pid)) throw new CliError(`HTTPS port ${port} is already running.`);
+
+  const checkoutUrl = localHttpUrl(options.checkoutUrl === true || !options.checkoutUrl ? 'http://127.0.0.1:3001' : options.checkoutUrl, '--checkout-url');
+  const proxyUrlValue = options.proxyUrl;
+  let backendRoutes: ProxyRoute[] = [];
+  if (proxyUrlValue) {
+    if (proxyUrlValue === true) throw new CliError('--proxy-url requires a value.', 2);
+    const proxyUrl = localHttpUrl(proxyUrlValue, '--proxy-url');
+    const proxyState = await readProxyState(proxyPort(new URL(proxyUrl).port || '80'));
+    if (!proxyState || !processIsRunning(proxyState.pid) || proxyState.proxyUrl !== proxyUrl) {
+      throw new CliError(`Local backend proxy is not running at ${proxyUrl}.`);
+    }
+    backendRoutes = proxyState.routes.map(route => ({ path: route.path, target: proxyUrl }));
+  }
+
+  const stateFile = httpsStatePath(port);
+  const keyFile = `/tmp/purchase-ui-https-${port}-key.pem`;
+  const certFile = `/tmp/purchase-ui-https-${port}-cert.pem`;
+  const logFile = `/tmp/purchase-ui-https-${port}.log`;
+  const secureUrl = `https://localhost.carvana.com${port === 443 ? '' : `:${port}`}`;
+  await generateCertificate(port, keyFile, certFile);
+  const state: HttpsState = { backendRoutes, certFile, checkoutUrl, keyFile, logFile, port, secureUrl };
+  await writeFile(stateFile, JSON.stringify(state), { mode: 0o600 });
+  await chmod(stateFile, 0o600);
+
+  const logDescriptor = openSync(logFile, 'a');
+  const gatewayScript = fileURLToPath(new URL('./https-gateway.ts', import.meta.url));
+  const child = spawn(process.execPath, [gatewayScript, '--state-file', stateFile], {
+    detached: true,
+    stdio: ['ignore', logDescriptor, logDescriptor]
+  });
+  closeSync(logDescriptor);
+  child.unref();
+  if (!child.pid) {
+    await unlink(stateFile).catch(() => undefined);
+    throw new CliError('HTTPS gateway could not be started.');
+  }
+
+  state.pid = child.pid;
+  await writeFile(stateFile, JSON.stringify(state), { mode: 0o600 });
+  if (!(await waitForHttps(secureUrl))) {
+    process.kill(child.pid, 'SIGTERM');
+    await unlink(stateFile).catch(() => undefined);
+    throw new CliError(`HTTPS gateway did not become ready. Check ${logFile}.`);
+  }
+  output({ status: 'started', secureUrl, pid: child.pid, checkoutUrl, backendRoutes, certFile, logFile });
+}
+
+async function httpsStatus(values: string[]): Promise<void> {
+  const options = parseOptions(values, ['port']);
+  const port = proxyPort(options.port === true || !options.port ? '443' : options.port);
+  const state = await readHttpsState(port);
+  if (!state || !processIsRunning(state.pid)) {
+    output({ status: 'stopped', port });
+    return;
+  }
+  output({ status: (await waitForHttps(state.secureUrl)) ? 'ready' : 'unhealthy', ...state });
+}
+
+async function stopHttps(values: string[]): Promise<void> {
+  const options = parseOptions(values, ['port']);
+  const port = proxyPort(options.port === true || !options.port ? '443' : options.port);
+  const stateFile = httpsStatePath(port);
+  const state = await readHttpsState(port);
+  if (state && processIsRunning(state.pid)) process.kill(state.pid!, 'SIGTERM');
+  await unlink(stateFile).catch(() => undefined);
+  output({ status: 'stopped', port });
+}
+
+async function httpsCommand(values: string[]): Promise<void> {
+  const [action, ...options] = values;
+  if (action === 'start') return startHttps(options);
+  if (action === 'status') return httpsStatus(options);
+  if (action === 'stop') return stopHttps(options);
+  throw new CliError('HTTPS action must be start, status, or stop.', 2);
+}
+
+function parseProxyRoutes(values: string[]): { port: number; routes: ProxyRoute[] } {
+  let port: number | undefined;
+  const routes: ProxyRoute[] = [];
+
+  for (let index = 0; index < values.length; index += 1) {
+    const flag = values[index];
+    const value = values[index + 1];
+    if (!value || value.startsWith('--')) throw new CliError(`${flag} requires a value.`, 2);
+    if (flag === '--port') port = proxyPort(value);
+    else if (flag === '--route') {
+      const separator = value.indexOf('=');
+      if (separator < 1) throw new CliError('--route must use PATH=URL.', 2);
+      const path = value.slice(0, separator).replace(/\/$/, '');
+      const target = value.slice(separator + 1).replace(/\/$/, '');
+      if (!path.startsWith('/') || path.includes('?') || path.includes('#')) {
+        throw new CliError('Proxy route paths must begin with / and cannot contain a query or fragment.', 2);
+      }
+      let targetUrl: URL;
+      try {
+        targetUrl = new URL(target);
+      } catch {
+        throw new CliError(`Invalid proxy route target: ${target}`, 2);
+      }
+      if (!['http:', 'https:'].includes(targetUrl.protocol) || targetUrl.username || targetUrl.password) {
+        throw new CliError('Proxy route targets must be HTTP(S) URLs without credentials.', 2);
+      }
+      if (routes.some(route => route.path === path)) throw new CliError(`Duplicate proxy route: ${path}`, 2);
+      routes.push({ path, target });
+    } else throw new CliError(`Unknown option: ${flag}`, 2);
+    index += 1;
+  }
+
+  if (!port) throw new CliError('--port is required.', 2);
+  if (!routes.length) throw new CliError('At least one --route is required.', 2);
+  return { port, routes };
+}
+
+async function waitForProxy(proxyUrl: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      const response = await fetch(`${proxyUrl}/_purchase-ui-proxy/health`, { signal: AbortSignal.timeout(1_000) });
+      if (response.ok) return true;
+    } catch {}
+    await Bun.sleep(100);
+  }
+  return false;
+}
+
+async function startProxy(values: string[]): Promise<void> {
+  const { port, routes } = parseProxyRoutes(values);
+  const existingState = await readProxyState(port);
+  if (existingState && processIsRunning(existingState.pid)) throw new CliError(`Proxy port ${port} is already running.`);
+
+  const stateFile = proxyStatePath(port);
+  const logFile = `/tmp/purchase-ui-proxy-${port}.log`;
+  const proxyUrl = `http://127.0.0.1:${port}`;
+  const state: ProxyState = {
+    controlKey: crypto.randomUUID(),
+    logFile,
+    port,
+    proxyUrl,
+    routes
+  };
+  await writeFile(stateFile, JSON.stringify(state), { mode: 0o600 });
+  await chmod(stateFile, 0o600);
+
+  const logDescriptor = openSync(logFile, 'a');
+  const proxyScript = fileURLToPath(new URL('./local-proxy.ts', import.meta.url));
+  const child = spawn(process.execPath, [proxyScript, '--state-file', stateFile], {
+    detached: true,
+    stdio: ['ignore', logDescriptor, logDescriptor]
+  });
+  closeSync(logDescriptor);
+  child.unref();
+  if (!child.pid) {
+    await unlink(stateFile).catch(() => undefined);
+    throw new CliError('Local backend proxy could not be started.');
+  }
+
+  state.pid = child.pid;
+  await writeFile(stateFile, JSON.stringify(state), { mode: 0o600 });
+  if (!(await waitForProxy(proxyUrl))) {
+    process.kill(child.pid, 'SIGTERM');
+    await unlink(stateFile).catch(() => undefined);
+    throw new CliError(`Local backend proxy did not become ready. Check ${logFile}.`);
+  }
+
+  output({ status: 'started', proxyUrl, pid: child.pid, routes, logFile });
+}
+
+async function proxyStatus(values: string[]): Promise<void> {
+  const options = parseOptions(values, ['port']);
+  const port = proxyPort(required(options, 'port'));
+  const state = await readProxyState(port);
+  if (!state || !processIsRunning(state.pid)) {
+    output({ status: 'stopped', port });
+    return;
+  }
+
+  const ready = await waitForProxy(state.proxyUrl);
+  output({ status: ready ? 'ready' : 'unhealthy', proxyUrl: state.proxyUrl, pid: state.pid, routes: state.routes, logFile: state.logFile });
+}
+
+async function stopProxy(values: string[]): Promise<void> {
+  const options = parseOptions(values, ['port']);
+  const port = proxyPort(required(options, 'port'));
+  const stateFile = proxyStatePath(port);
+  const state = await readProxyState(port);
+  if (state && processIsRunning(state.pid)) process.kill(state.pid!, 'SIGTERM');
+  await unlink(stateFile).catch(() => undefined);
+  output({ status: 'stopped', port });
+}
+
+async function proxyCommand(values: string[]): Promise<void> {
+  const [action, ...options] = values;
+  if (action === 'start') return startProxy(options);
+  if (action === 'status') return proxyStatus(options);
+  if (action === 'stop') return stopProxy(options);
+  throw new CliError('Proxy action must be start, status, or stop.', 2);
+}
+
+async function registerProxyTokens(proxyUrlValue: string, cookies: AuthCookie[], jwt: string): Promise<void> {
+  let proxyUrl: URL;
+  try {
+    proxyUrl = new URL(proxyUrlValue);
+  } catch {
+    throw new CliError('--proxy-url must be a valid URL.', 2);
+  }
+  if (
+    proxyUrl.protocol !== 'http:' ||
+    !['localhost', '127.0.0.1', '::1'].includes(proxyUrl.hostname) ||
+    (proxyUrl.pathname !== '/' && proxyUrl.pathname !== '') ||
+    proxyUrl.search ||
+    proxyUrl.hash
+  ) {
+    throw new CliError('--proxy-url must be an HTTP loopback origin without a path, query, or fragment.', 2);
+  }
+  const port = proxyPort(proxyUrl.port || '80');
+  const state = await readProxyState(port);
+  if (!state || !processIsRunning(state.pid) || state.proxyUrl !== proxyUrl.origin) {
+    throw new CliError(`Local backend proxy is not running at ${proxyUrl.origin}.`);
+  }
+
+  const accessCookie = cookies.find(cookie => cookie.name === 'CVAccessToken')?.value;
+  if (!accessCookie) throw new CliError('PaymentsTesting did not return the proxy registration token.');
+  let phantomToken = accessCookie;
+  try {
+    const parsed = record(JSON.parse(accessCookie));
+    if (typeof parsed?.access_token === 'string') phantomToken = parsed.access_token;
+  } catch {}
+
+  let response: Response;
+  try {
+    response = await fetch(`${proxyUrl.origin}/_purchase-ui-proxy/tokens`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Purchase-UI-Proxy-Key': state.controlKey
+      },
+      body: JSON.stringify({ phantomToken, jwt }),
+      signal: AbortSignal.timeout(10_000)
+    });
+  } catch {
+    throw new CliError('Local backend proxy token registration failed.');
+  }
+  if (!response.ok) throw new CliError(`Local backend proxy rejected token registration with HTTP ${response.status}.`);
 }
 
 async function stage(options: Options): Promise<void> {
@@ -241,16 +680,17 @@ async function stage(options: Options): Promise<void> {
   });
 }
 
-async function browserTarget(instanceId: string, origin: string): Promise<string> {
-  if (!/^[a-zA-Z0-9-]{1,64}$/.test(instanceId)) throw new CliError('Invalid MCP session ID.');
+async function browserTarget(browserPort: string, origin: string): Promise<string> {
+  const port = Number(browserPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new CliError('Browser port must be between 1 and 65535.', 2);
   let response: Response;
   try {
-    response = await fetch(`http://127.0.0.1:9222/cdp/${instanceId}/json/list`, { signal: AbortSignal.timeout(10_000) });
+    response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(10_000) });
   } catch {
-    throw new CliError('Could not reach the Chrome DevTools MCP proxy.');
+    throw new CliError('Could not reach the Chrome DevTools MCP browser.');
   }
   const targets = await responseValue(response);
-  if (!response.ok || !Array.isArray(targets)) throw new CliError('MCP session was not found.');
+  if (!response.ok || !Array.isArray(targets)) throw new CliError('Chrome returned an unexpected target list.');
   const target =
     targets.find(target => record(target)?.type === 'page' && String(record(target)?.url).startsWith(origin)) ??
     targets.find(target => record(target)?.type === 'page');
@@ -263,8 +703,8 @@ async function browserTarget(instanceId: string, origin: string): Promise<string
   return url.href;
 }
 
-async function injectCookies(instanceId: string, cookies: AuthCookie[], origin: string, destination: string): Promise<void> {
-  const socket = new WebSocket(await browserTarget(instanceId, origin));
+async function injectCookies(browserPort: string, cookies: AuthCookie[], origin: string, destination: string): Promise<void> {
+  const socket = new WebSocket(await browserTarget(browserPort, origin));
   const pending = new Map<
     number,
     {
@@ -359,19 +799,39 @@ async function injectCookies(instanceId: string, cookies: AuthCookie[], origin: 
 
 async function login(options: Options): Promise<void> {
   const customerId = required(options, 'customerId');
-  const browserInstance = required(options, 'browserInstance');
+  const browserPort = required(options, 'browserPort');
   const host = required(options, 'host');
+  const proxyUrl = options.proxyUrl;
+  const securePort = options.securePort;
+  const impersonate = options.impersonate === true;
+  if (options.impersonate !== undefined && options.impersonate !== true) {
+    throw new CliError('--impersonate does not accept a value.', 2);
+  }
+  if (proxyUrl === true) throw new CliError('--proxy-url requires a value.', 2);
+  if (proxyUrl && !['local', 'local-https'].includes(host)) {
+    throw new CliError('--proxy-url is only for testing a local UI against local backends.', 2);
+  }
   const target =
     host === 'local'
       ? { origin: 'http://localhost:3001', destination: 'http://localhost:3001/purchase/' }
+      : host === 'local-https'
+        ? (() => {
+            const port = proxyPort(securePort === true || !securePort ? '443' : securePort);
+            const origin = `https://localhost.carvana.com${port === 443 ? '' : `:${port}`}`;
+            return { origin, destination: `${origin}/purchase/` };
+          })()
       : host === 'testazure'
         ? { origin: 'https://testazure.carvana.com', destination: 'https://testazure.carvana.com/purchase' }
         : null;
-  if (!target) throw new CliError('--host must be local or testazure.', 2);
-  await browserTarget(browserInstance, target.origin);
-  const cookies = await authCookies(customerId);
-  await injectCookies(browserInstance, cookies, target.origin, target.destination);
-  output({ status: 'authenticated', host, destination: target.destination });
+  if (!target) throw new CliError('--host must be local, local-https, or testazure.', 2);
+  await browserTarget(browserPort, target.origin);
+  const [cookies, apiJwt] = await Promise.all([
+    authCookies(customerId, impersonate),
+    proxyUrl ? customerApiJwt(customerId, impersonate) : Promise.resolve(undefined)
+  ]);
+  if (proxyUrl && apiJwt) await registerProxyTokens(proxyUrl, cookies, apiJwt);
+  await injectCookies(browserPort, cookies, target.origin, target.destination);
+  output({ status: 'authenticated', host, destination: target.destination, impersonate, ...(proxyUrl ? { proxyRegistered: proxyUrl } : {}) });
 }
 
 async function preflightFeature(options: Options): Promise<void> {
@@ -414,7 +874,9 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'stage') return stage(parseOptions(values, ['blueprintId']));
-  if (command === 'login') return login(parseOptions(values, ['customerId', 'host', 'browserInstance']));
+  if (command === 'login') return login(parseOptions(values, ['customerId', 'host', 'browserPort', 'securePort', 'proxyUrl', 'impersonate']));
+  if (command === 'proxy') return proxyCommand(values);
+  if (command === 'https') return httpsCommand(values);
   if (command === 'preflight-feature') return preflightFeature(parseOptions(values, ['component', 'branch', 'artifactKey']));
   throw new CliError(`Unknown command: ${command}`, 2);
 }
