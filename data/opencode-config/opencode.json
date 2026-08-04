@@ -66,6 +66,7 @@
     "Snowflake": {
       "type": "remote",
       "url": "https://snowflake-mcp.cvnacorp.com/mcp",
+      "timeout": 240000,
       "enabled": false
     },
     "Splunk": {
