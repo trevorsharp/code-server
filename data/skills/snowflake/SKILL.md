@@ -1,6 +1,6 @@
 ---
 name: snowflake
-description: Use when investigating Carvana data, metrics, lineage, dashboards, or Snowflake objects with the Snowflake MCP.
+description: Use this when using the Snowflake MCP
 ---
 
 # Snowflake

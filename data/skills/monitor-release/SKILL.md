@@ -41,7 +41,7 @@ Treat the production release as successful only when its state is `completed` an
 
 ### Telemetry discovery
 
-Splunk and Datadog will be required for this release monitor. If either MCP is missing, ask the user to enable them before proceeding. Run just the necessary queries to derive the following data. Don't do any additional analysis at this point (that will be handled in the scheduled job).
+Splunk and Datadog will be required for this release monitor. If either MCP cannot be enabled, ask the user to enable them before proceeding. Run just the necessary queries to derive the following data. Don't do any additional analysis at this point (that will be handled in the scheduled job).
 
 Derive the candidate Splunk source by removing the `carvana-oec-` prefix from the service name from the build. Verify it with a small Splunk query over the last 15 minutes:
 
