@@ -61,6 +61,7 @@ RUN touch /home/${USERNAME}/.sudo_as_admin_successful
 RUN cat << 'EOF' > /home/${USERNAME}/.bashrc
 PS1='\h \W \$ '
 export PATH="$HOME/projects/TrevorSharp/CustomGitCommands/scripts:$PATH"
+alias restart='sudo kill -TERM 1'
 EOF
 
 # Install NVM, Node.js LTS, and Yarn

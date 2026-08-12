@@ -33,7 +33,6 @@ services:
       - ./workspaces:/home/sharp/workspaces
       - ./opencode:/home/sharp/opencode
       - ~/Downloads:/home/sharp/Downloads
-      - ./data/npmrc:/home/sharp/.npmrc:ro
       - ./data/NuGet.Config:/home/sharp/.nuget/NuGet/NuGet.Config:ro
       - ./data/certs:/home/sharp/certs:ro
       - ./data/ssh:/home/sharp/.ssh:ro
