@@ -53,7 +53,7 @@
       "url": "https://jira-mcp.cvnacorp.com/mcp",
       "enabled": false
     },
-    "Google Drive": {
+    "Google Workspace": {
       "type": "remote",
       "url": "https://gdrive-mcp.cvnacorp.com/mcp",
       "enabled": false
