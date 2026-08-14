@@ -18,7 +18,7 @@ If it prints a URL, use it. If not, ask the user for the PR URL.
 
 ### Run the helper script
 
-Pass the PR URL directly to the bundled [get-pr-feedback.sh](get-pr-feedback.sh) script. It detects the provider from the URL, fetches the feedback, and prints structured markdown.
+Pass the PR URL directly to the bundled [get-pr-feedback.sh](./get-pr-feedback.sh) script. It detects the provider from the URL, fetches the feedback, and prints structured markdown.
 
 ```bash
 get-pr-feedback.sh "<pr-url>"

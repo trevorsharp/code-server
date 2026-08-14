@@ -9,7 +9,7 @@ Search for Azure DevOps or GitHub repositories by name and clone locally for ins
 
 ## Search for repo
 
-- Use only the bundled script [repo-discovery.sh](repo-discovery.sh) to search for repos. 
+- Use only the bundled script [repo-discovery.sh](./repo-discovery.sh) to search for repos. 
 - Searches require an Azure DevOps project or GitHub org `--azure-project <project>` or `--github-org <org>`.
 
 If the Azure DevOps project is unclear, list projects and pick the one(s) most likely from the list of names. Use `Carvana.Transaction` by default if there is no better context.
