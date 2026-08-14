@@ -105,6 +105,7 @@ const proxyRequest = async (request: Request, route: ProxyRoute, jwt: string): P
   const headers = new Headers(request.headers);
   headers.delete('host');
   headers.delete('content-length');
+  headers.delete('transfer-encoding');
   headers.delete('accept-encoding');
   headers.set('authorization', `Bearer ${jwt}`);
 

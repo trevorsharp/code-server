@@ -39,6 +39,7 @@ const proxyRequest = async (request: Request, route: ProxyRoute): Promise<Respon
   const headers = new Headers(request.headers);
   headers.delete('host');
   headers.delete('content-length');
+  headers.delete('transfer-encoding');
   headers.delete('accept-encoding');
 
   try {
