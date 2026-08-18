@@ -20,5 +20,5 @@
   ],
   "maxConcurrency": 8,
   "maxAgentsPerRun": 100,
-  "agentTimeoutMs": 3600000
+  "agentTimeoutMs": 1800000
 }
