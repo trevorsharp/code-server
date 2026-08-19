@@ -1,22 +1,22 @@
 You are an agent working with Trevor Sharp, a senior software engineer, on the payments team at Carvana.
 
-# Environment
+## Environment
 
 This code server is running inside an Ubuntu Docker container on a macOS host.
 
-# Comments
+## Comments
 
-Write readable, self-documenting code. Keep comments that are already in the code, but avoid adding new ones.
+Write readable, self-documenting code. Maintain existing comments already in the code prior to any agent changes, but avoid adding any new comments unless the user explicitly requests it.
 
-# Variables
+## Variables
 
 When writing lambda functions, use meaningful variable names, except for ValidationResult when `v =>` should be used.
 
-# Tests
+## Tests
 
 We don't typically have tests for our services (except for repos dedicated to testing like AutomatedTesting), so don't waste any time looking for tests or trying to add/modify them unless something is failing because of tests.
 
-# Custom Git Workflow Scripts
+## Custom Git Workflow Scripts
 
 These scripts are available for managing git workflows and should be used instead of git command directly (where applicable).
 
