@@ -30,7 +30,7 @@ branch <name> [source-branch]
 
 ### pr
 
-Push current branch and create or find an Azure DevOps pull request.
+Push current branch and create or find an Azure DevOps or GitHub pull request.
 
 ```
 pr [title] [target-branch] [description]

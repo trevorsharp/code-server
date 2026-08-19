@@ -44,9 +44,6 @@
   "permission": {
     "*": "allow"
   },
-  "tools": {
-    "task": false
-  },
   "mcp": {
     "Jira": {
       "type": "remote",
@@ -95,7 +92,7 @@
         "bun",
         "/home/sharp/.config/opencode/mcp/chrome-devtools.ts"
       ],
-      "env": {
+      "environment": {
         "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1"
       },
       "enabled": false

@@ -561,7 +561,7 @@ SCRIPT SOURCE: provide exactly one of \`script\` or \`scriptPath\`. A scriptPath
 Then write plain JavaScript forming an async function body. Metadata admits only literal data: name and description are required; phases is optional and contains {title, detail?}. Variables, calls, spreads, template literals, interpolation, and model fields are rejected. No imports or TypeScript. Workflow scripts must not use filesystem, Node APIs, fetch, or hidden globals. Return a JSON-serializable value.
 
 INJECTED PRIMITIVES:
-- await agent(prompt, opts?) -> raw text or structured data when opts.schema is set. A terminal agent failure cancels the remaining workflow and reports the failure to the parent session. Each call creates a nested child session in the current project. Children cannot see this conversation or script, so prompts must be self-contained. Children inherit available session tools and MCP integrations, except task and workflow tools are disabled to prevent recursion.
+- await agent(prompt, opts?) -> raw text or structured data when opts.schema is set. A terminal agent failure cancels the remaining workflow and reports the failure to the parent session. Each call creates a nested child session in the current project. Children cannot see this conversation or script, so prompts must be self-contained. Children inherit available session tools and MCP integrations, except workflow tools are disabled to prevent recursion.
     label: short sentence-case child title and journal label
 ${
   cfg.models.length > 0
@@ -1066,7 +1066,6 @@ export const WorkflowPlugin: Plugin = async ({
                 }
               : {}),
             tools: {
-              task: false,
               workflow_run: false,
               workflow_status: false,
               workflow_cancel: false,
@@ -1430,20 +1429,6 @@ export const WorkflowPlugin: Plugin = async ({
       if (!run || run.status !== "running" || run.cancelled) return;
       cancelRun(run, "ui cancel button");
     },
-    config: async (opencodeConfig: any) => {
-      const denyTask = (permission: any) => {
-        if (typeof permission === "string")
-          return { "*": permission, task: "deny" };
-        const { task: _task, ...rest } = permission ?? {};
-        return { ...rest, task: "deny" };
-      };
-
-      opencodeConfig.permission = denyTask(opencodeConfig.permission);
-
-      for (const agent of Object.values(opencodeConfig.agent ?? {}) as any[]) {
-        agent.permission = denyTask(agent.permission);
-      }
-    },
     "experimental.chat.system.transform": async (
       input: { sessionID?: string },
       output: { system: string[] },
@@ -1453,15 +1438,8 @@ export const WorkflowPlugin: Plugin = async ({
       );
       if (isWorkflowChild) return;
       output.system.push(
-        "There is no task/subagent tool. When delegation is useful, use workflow_run, including for a single agent.",
+        "Use workflow_run whenever delegation helps, including for a single agent.",
       );
-    },
-    "tool.execute.before": async (input: { tool: string }) => {
-      if (input.tool === "task") {
-        throw new Error(
-          "The task/subagent tool is disabled. Use workflow_run instead.",
-        );
-      }
     },
     // Variants load in the background after startup; rebuild the description
     // each time it is sent to the LLM so it reflects the current state.

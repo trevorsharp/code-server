@@ -5,17 +5,17 @@ const QUESTION_WAIT_TIMEOUT_MS = 5 * 60 * 1000
 
 type QuestionEvent =
   | {
-      type: "question.asked"
-      properties: {
-        id: string
-        sessionID: string
-        questions: Array<{ question: string }>
-      }
+    type: "question.asked"
+    properties: {
+      id: string
+      sessionID: string
+      questions: Array<{ question: string }>
     }
+  }
   | {
-      type: "question.replied" | "question.rejected"
-      properties: { requestID: string }
-    }
+    type: "question.replied" | "question.rejected"
+    properties: { requestID: string }
+  }
 
 async function sendNotification(message: string, sessionID: string, directory: string) {
   const webhookUrl = process.env.NOTIFY_SLACK_WEBHOOK_URL
@@ -88,7 +88,7 @@ export const NotifyPlugin: Plugin = async ({ client, directory }) => {
     tool: {
       notify: tool({
         description:
-          "Send Trevor a Slack notification. Use only when the user explicitly asks to be notified, pinged, or alerted.",
+          "Send Trevor a Slack notification. Use only when explicitly instructed to notify, ping, or alert Trevor.",
         args: {
           message: tool.schema
             .string()
