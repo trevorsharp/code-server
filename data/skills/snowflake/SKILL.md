@@ -7,6 +7,12 @@ description: Use this when using the Snowflake MCP
 
 Use the Snowflake business intelligence (BI) corpus to discover and understand candidate sources, then use live Snowflake to verify them.
 
+## Exploration Workflows
+
+- Consider a workflow when exploration spans several candidate objects, requires substantial source discovery, or would add large query results to the parent context. Handle simple known-object queries directly.
+- The workflow's cost-efficient explorer is a good fit for bounded evidence gathering. Prefer the default model when business meaning, joins, or conflicting evidence require deeper judgment.
+- Give the workflow enough business context to investigate independently, including the intended grain and time window, and ask it to preserve evidence and limitations for later synthesis or validation.
+
 ## Route By Intent
 
 - Use `Snowflake_bi_retrieve` for focused business-language discovery questions such as "what table contains payment selections?" Include the desired grain and use case, and retrieve evidence for competing interpretations, consumer objects, key fields, and lineage. It is also the default for understanding how a column is populated, inspecting DDL or application code, or resolving a specific definition.

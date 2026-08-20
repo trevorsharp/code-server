@@ -8,14 +8,9 @@
       "note": "The primary implementer and generalist. Use for code analysis, requirements, implementation, refactoring, debugging, synthesis, adjudicating review findings, and independently verifying outcomes. Default to this profile when another profile does not clearly fit."
     },
     {
-      "slug": "openai/gpt-5.6-sol",
-      "variant": "low",
-      "note": "The bounded evidence runner. Use for local source gathering, deterministic lookups, extraction, classification, formatting, and clearly scoped scans. Escalate when ambiguity, conflicting evidence, or substantial judgment is involved."
-    },
-    {
       "slug": "openai/gpt-5.6-luna",
       "variant": "high",
-      "note": "The browser agent. Use for web research, browser testing, navigation, and bounded high-volume tasks. Define explicit success and stopping conditions, preserve gathered evidence, and return a blocker rather than repeating failed actions."
+      "note": "The cost-efficient high-throughput explorer. Use for browser use and bounded data-source investigations where it can gather evidence cheaply. Provide an explicit instructions, success criteria, and stop conditions. For critical tasks, require reconciliation or independent validation afterwards. Treat it as an evidence runner rather than the sole authority for ambiguous or consequential conclusions."
     },
     {
       "slug": "claude-cli/claude-fable-5",
