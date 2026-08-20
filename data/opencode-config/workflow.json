@@ -5,22 +5,22 @@
     {
       "slug": "openai/gpt-5.6-sol",
       "variant": "medium",
-      "note": "The generalist and verifier. Use for analyzing code and requirements, defining scope, synthesizing evidence, and independently verifying outcomes. Default to this profile for tasks that do not fit cleanly into another profile."
+      "note": "The primary implementer and generalist. Use for code analysis, requirements, implementation, refactoring, debugging, synthesis, adjudicating review findings, and independently verifying outcomes. Default to this profile when another profile does not clearly fit."
     },
     {
       "slug": "openai/gpt-5.6-sol",
       "variant": "low",
-      "note": "The evidence runner. Use for browser testing, web research, source gathering, deterministic lookups, extraction, classification, formatting, and bounded scans. This should be the only agent to perform browser work."
+      "note": "The bounded evidence runner. Use for local source gathering, deterministic lookups, extraction, classification, formatting, and clearly scoped scans. Escalate when ambiguity, conflicting evidence, or substantial judgment is involved."
+    },
+    {
+      "slug": "openai/gpt-5.6-luna",
+      "variant": "high",
+      "note": "The browser agent. Use for web research, browser testing, navigation, and bounded high-volume tasks. Define explicit success and stopping conditions, preserve gathered evidence, and return a blocker rather than repeating failed actions."
     },
     {
       "slug": "claude-cli/claude-fable-5",
       "variant": "high",
-      "note": "The planner and reviewer. Use for planning, architecture, design, code review, risk identification, and explicitly finding simplifications. Prompts for this profile should describe the goal without mentioning specific tool names because its available tools may differ from the parent session."
-    },
-    {
-      "slug": "claude-cli/claude-opus-5",
-      "variant": "high",
-      "note": "The implementer. Use for implementing planned changes, refactoring, addressing review findings, and correcting problems in the code that it previously wrote. Prompts for this profile should describe the goal without mentioning specific tool names because its available tools may differ from the parent session."
+      "note": "The high-leverage planner and adversarial reviewer. Use judiciously for architecture, design, code review, challenging assumptions, identifying risks, finding simplifications, and independently reviewing OpenAI-generated work. Prompts should describe the goal without mentioning specific tool names because its harness differs from the parent session."
     }
   ],
   "maxConcurrency": 8,
