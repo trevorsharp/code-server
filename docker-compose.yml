@@ -1,6 +1,6 @@
 services:
   code-server:
-    build: 
+    build:
       context: ./setup
       args:
         USERNAME: sharp
@@ -30,7 +30,7 @@ services:
       - "127.0.0.1:9222:9222"
     volumes:
       - ./projects:/home/sharp/projects
-      - ./workspaces:/home/sharp/workspaces
+      - workspaces:/home/sharp/workspaces
       - ./opencode:/home/sharp/opencode
       - ~/Downloads:/home/sharp/Downloads
       - ./data/NuGet.Config:/home/sharp/.nuget/NuGet/NuGet.Config:ro
@@ -50,3 +50,8 @@ services:
       - ./data/AGENTS.md:/home/sharp/.claude/CLAUDE.md:ro
       - ./data/skills:/home/sharp/.config/opencode/skills
       - ./data/skills:/home/sharp/.claude/skills
+
+volumes:
+  workspaces:
+    name: code-server-workspaces
+    external: true

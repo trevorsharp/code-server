@@ -3,6 +3,12 @@ set -e
 
 env | grep -v -E '^(HOME|PWD|SHLVL|USER|LOGNAME|PATH|TERM|_)=' > /etc/environment
 
+WORKSPACES_DIR="/home/${USERNAME}/workspaces"
+
+if [ -d "${WORKSPACES_DIR}" ]; then
+  chown "$(id -u "${USERNAME}"):$(id -g "${USERNAME}")" "${WORKSPACES_DIR}"
+fi
+
 OPENCODE_CMD="opencode"
 
 if [ "${OPENCODE_FORK:-0}" = "1" ]; then
