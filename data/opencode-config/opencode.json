@@ -14,7 +14,7 @@
     },
     "claude-cli": {
       "whitelist": [
-        "claude-fable-5"
+        "claude-fable-5-1"
       ]
     }
   },
