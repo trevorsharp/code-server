@@ -112,7 +112,7 @@ type Run = {
   cardQueue: Promise<void>;
 };
 
-const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const SCRIPT_PARAMS = [
   "agent",
   "parallel",
@@ -163,11 +163,11 @@ function loadConfig(worktree: string | undefined): WorkflowConfig {
   const merged = { ...DEFAULT_CONFIG, ...globalCfg, ...projectCfg };
   merged.models = Array.isArray(merged.models)
     ? merged.models.filter(
-      (model: any) =>
-        model &&
-        typeof model.slug === "string" &&
-        typeof model.variant === "string",
-    )
+        (model: any) =>
+          model &&
+          typeof model.slug === "string" &&
+          typeof model.variant === "string",
+      )
     : [];
   return merged;
 }
@@ -179,7 +179,7 @@ function loadConfig(worktree: string | undefined): WorkflowConfig {
 class Semaphore {
   private active = 0;
   private queue: Array<() => void> = [];
-  constructor(private limit: number) { }
+  constructor(private limit: number) {}
   async acquire(): Promise<() => void> {
     while (this.active >= this.limit) {
       await new Promise<void>((resolve) => this.queue.push(resolve));
@@ -489,11 +489,11 @@ function statusSnapshot(run: Run) {
     agentsFailed: run.agentsFailed,
     phases: run.phases
       ? run.phases.map((phase) => ({
-        title: phase.title,
-        started: phase.started,
-        finished: phase.finished,
-        failed: phase.failed,
-      }))
+          title: phase.title,
+          started: phase.started,
+          finished: phase.finished,
+          failed: phase.failed,
+        }))
       : undefined,
     agents: run.agentRows,
     scriptPath: path.join(run.dir, "script.js"),
@@ -563,12 +563,13 @@ Then write plain JavaScript forming an async function body. Metadata admits only
 INJECTED PRIMITIVES:
 - await agent(prompt, opts?) -> raw text or structured data when opts.schema is set. A terminal agent failure cancels the remaining workflow and reports the failure to the parent session. Each call creates a nested child session in the current project. Children cannot see this conversation or script, so prompts must be self-contained. Children inherit available session tools and MCP integrations, except workflow tools are disabled to prevent recursion.
     label: short sentence-case child title and journal label
-${cfg.models.length > 0
-      ? `    model: REQUIRED exact slug from MODEL PROFILES
+${
+  cfg.models.length > 0
+    ? `    model: REQUIRED exact slug from MODEL PROFILES
     variant: REQUIRED exact variant paired with that slug`
-      : `    model: omit when no profiles are configured
+    : `    model: omit when no profiles are configured
     variant: omit when no profiles are configured`
-    }
+}
     system: additional child system text
     schema: JSON Schema passed through opencode's native structured-output format with two retries; returns AssistantMessage.structured
     phase: declared meta.phases title. Prefer opts.phase inside concurrent callbacks.
@@ -866,7 +867,7 @@ export const WorkflowPlugin: Plugin = async ({
         const ref = await upsertAgentCard(run, runCardBody(run, final));
         if (ref && !run.card) run.card = ref;
       })
-      .catch(() => { });
+      .catch(() => {});
     return run.cardQueue;
   }
 
@@ -889,9 +890,9 @@ export const WorkflowPlugin: Plugin = async ({
   // Script primitives
   // -------------------------------------------------------------------------
 
-  class WorkflowCancelledError extends Error { }
-  class WorkflowFailedError extends Error { }
-  class AgentTimeoutError extends Error { }
+  class WorkflowCancelledError extends Error {}
+  class WorkflowFailedError extends Error {}
+  class AgentTimeoutError extends Error {}
 
   async function runAgent(
     run: Run,
@@ -902,9 +903,9 @@ export const WorkflowPlugin: Plugin = async ({
     const startedAt = Date.now();
     const label = sentenceCase(
       opts.label ??
-      (typeof prompt === "string"
-        ? prompt.replace(/\s+/g, " ").slice(0, 60)
-        : "Agent"),
+        (typeof prompt === "string"
+          ? prompt.replace(/\s+/g, " ").slice(0, 60)
+          : "Agent"),
     );
     let phase: PhaseState | null = null;
     let sessionID: string | undefined;
@@ -1045,7 +1046,7 @@ export const WorkflowPlugin: Plugin = async ({
         agentControl.abort = () => {
           (
             client.session.abort({ path: { id: sessionID! } }) as Promise<any>
-          ).catch(() => { });
+          ).catch(() => {});
         };
         const request = client.session.prompt({
           path: { id: sessionID },
@@ -1057,14 +1058,16 @@ export const WorkflowPlugin: Plugin = async ({
             system,
             ...(opts.schema
               ? {
-                format: {
-                  type: "json_schema",
-                  schema: opts.schema,
-                  retryCount: 2,
-                },
-              }
+                  format: {
+                    type: "json_schema",
+                    schema: opts.schema,
+                    retryCount: 2,
+                  },
+                }
               : {}),
             tools: {
+              notify: false,
+              question: false,
               workflow_run: false,
               workflow_status: false,
               workflow_cancel: false,
@@ -1298,7 +1301,7 @@ export const WorkflowPlugin: Plugin = async ({
       const excerpt =
         resultJson.length > 6000
           ? resultJson.slice(0, 6000) +
-          "\n... (truncated — full value in result.json)"
+            "\n... (truncated — full value in result.json)"
           : resultJson;
       return `${header}\nResult:\n${excerpt}\n${artifacts}\nThis is an automated completion notification from the workflow plugin, not a user message. Summarize this result for the user now, relating it to what they originally asked for.`;
     }
@@ -1599,8 +1602,8 @@ export const WorkflowPlugin: Plugin = async ({
           const status = live
             ? statusSnapshot(live)
             : readJsonIfExists(
-              path.join(cfg.dataDir, args.runId, "status.json"),
-            );
+                path.join(cfg.dataDir, args.runId, "status.json"),
+              );
           if (!status) return `No run found with ID ${args.runId}.`;
           if (!live && status.status === "running") {
             status.status = "interrupted";

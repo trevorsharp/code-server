@@ -98,7 +98,8 @@
         "/home/sharp/.config/opencode/mcp/chrome-devtools.ts"
       ],
       "environment": {
-        "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1"
+        "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
+        "CHROME_DEVTOOLS_EXTENSIONS": "[]"
       },
       "enabled": false
     }

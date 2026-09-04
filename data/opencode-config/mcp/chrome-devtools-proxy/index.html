@@ -23,6 +23,7 @@
       .instance { overflow: hidden; border: 1px solid #262b33; border-radius: 14px; background: #12161b; }
       .instance-header { display: flex; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid #262b33; }
       .identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .session-controls { display: flex; align-items: center; gap: 14px; }
       .dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #f0a33a; box-shadow: 0 0 14px #f0a33a66; }
       .online .dot { background: #48d597; box-shadow: 0 0 14px #48d59766; }
       .instance-name { overflow: hidden; font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; }
@@ -32,16 +33,20 @@
       .target + .target { border-top: 1px solid #20252c; }
       .target-title { overflow: hidden; margin-bottom: 5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
       .target-url { overflow: hidden; color: #7e8792; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
-      .inspect { border: 1px solid #3b4653; border-radius: 8px; padding: 8px 12px; color: #dfe6ee; font-size: 13px; text-decoration: none; }
-      .inspect:hover { border-color: #78a9ff; color: #9fc0ff; }
+      .target-actions { display: flex; align-items: center; gap: 8px; }
+      .action { border: 1px solid #3b4653; border-radius: 8px; padding: 8px 12px; background: transparent; color: #dfe6ee; font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
+      .action:hover:not(:disabled) { border-color: #78a9ff; color: #9fc0ff; }
+      .action:disabled { opacity: 0.55; cursor: wait; }
       .empty { padding: 72px 24px; border: 1px dashed #303640; border-radius: 14px; color: #7e8792; text-align: center; }
       .waiting { padding: 18px 20px; color: #9299a3; font-size: 13px; }
       @media (max-width: 640px) {
         main { width: min(100% - 24px, 1100px); padding: 28px 0; }
         header { align-items: start; flex-direction: column; gap: 8px; }
         .instance-header { align-items: start; flex-direction: column; }
+        .session-controls { align-items: start; flex-direction: column; }
         .target { grid-template-columns: 1fr; }
-        .inspect { justify-self: start; }
+        .target-actions { justify-self: start; }
+        .action { justify-self: start; }
       }
     </style>
   </head>
@@ -58,6 +63,11 @@
     <script>
       const instancesElement = document.querySelector("#instances");
       const summaryElement = document.querySelector("#summary");
+      const creatingTabs = new Set();
+      const tabErrors = new Map();
+      const closingTabs = new Set();
+      const closeErrors = new Map();
+      let refreshRequest = 0;
 
       const decodeEntities = (value) => {
         const textarea = document.createElement("textarea");
@@ -78,6 +88,58 @@
         element.textContent = text;
         parent.append(element);
         return element;
+      };
+
+      const createTab = async (instanceId) => {
+        creatingTabs.add(instanceId);
+        tabErrors.delete(instanceId);
+        await refresh();
+
+        try {
+          const response = await fetch(`/api/instances/${encodeURIComponent(instanceId)}/tabs`, {
+            method: "POST",
+          });
+          if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.error || `HTTP ${response.status}`);
+          }
+        } catch (error) {
+          tabErrors.set(instanceId, error instanceof Error ? error.message : "Failed to create tab");
+          setTimeout(() => {
+            tabErrors.delete(instanceId);
+            void refresh();
+          }, 4000);
+        } finally {
+          creatingTabs.delete(instanceId);
+          await refresh();
+        }
+      };
+
+      const closeTab = async (instanceId, targetId) => {
+        const tabKey = `${instanceId}:${targetId}`;
+        closingTabs.add(tabKey);
+        closeErrors.delete(tabKey);
+        await refresh();
+
+        try {
+          const response = await fetch(
+            `/api/instances/${encodeURIComponent(instanceId)}/tabs/${encodeURIComponent(targetId)}`,
+            { method: "DELETE" },
+          );
+          if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.error || `HTTP ${response.status}`);
+          }
+        } catch (error) {
+          closeErrors.set(tabKey, error instanceof Error ? error.message : "Failed to close tab");
+          setTimeout(() => {
+            closeErrors.delete(tabKey);
+            void refresh();
+          }, 4000);
+        } finally {
+          closingTabs.delete(tabKey);
+          await refresh();
+        }
       };
 
       const render = (instances) => {
@@ -102,7 +164,25 @@
           identity.append(dot);
           appendText(identity, "instance-name", instance.id);
           header.append(identity);
-          appendText(header, "meta", `PID ${instance.pid} | CDP ${instance.port} | ${formatAge(instance.startedAt)}`);
+          const controls = document.createElement("div");
+          controls.className = "session-controls";
+          appendText(controls, "meta", `PID ${instance.pid} | CDP ${instance.port} | ${formatAge(instance.startedAt)}`);
+          if (instance.online) {
+            const newTab = document.createElement("button");
+            const tabError = tabErrors.get(instance.id);
+            newTab.className = "action";
+            newTab.type = "button";
+            newTab.disabled = creatingTabs.has(instance.id);
+            newTab.textContent = newTab.disabled
+              ? "Opening..."
+              : tabError
+                ? "Retry new tab"
+                : "New tab";
+            if (tabError) newTab.title = tabError;
+            newTab.addEventListener("click", () => void createTab(instance.id));
+            controls.append(newTab);
+          }
+          header.append(controls);
           card.append(header);
 
           if (!instance.online) {
@@ -124,15 +204,32 @@
               );
               appendText(details, "target-url", target.url || target.id);
               row.append(details);
+              const actions = document.createElement("div");
+              actions.className = "target-actions";
               if (target.inspectUrl) {
                 const inspect = document.createElement("a");
-                inspect.className = "inspect";
+                inspect.className = "action";
                 inspect.href = target.inspectUrl;
                 inspect.target = "_blank";
                 inspect.rel = "noreferrer";
                 inspect.textContent = "Inspect";
-                row.append(inspect);
+                actions.append(inspect);
               }
+              const tabKey = `${instance.id}:${target.id}`;
+              const closeError = closeErrors.get(tabKey);
+              const close = document.createElement("button");
+              close.className = "action";
+              close.type = "button";
+              close.disabled = closingTabs.has(tabKey);
+              close.textContent = close.disabled
+                ? "Closing..."
+                : closeError
+                  ? "Retry close"
+                  : "Close";
+              if (closeError) close.title = closeError;
+              close.addEventListener("click", () => void closeTab(instance.id, target.id));
+              actions.append(close);
+              row.append(actions);
               targets.append(row);
             }
             card.append(targets);
@@ -143,12 +240,14 @@
       };
 
       const refresh = async () => {
+        const requestId = ++refreshRequest;
         try {
           const response = await fetch("/api/instances", { cache: "no-store" });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          render(await response.json());
+          const instances = await response.json();
+          if (requestId === refreshRequest) render(instances);
         } catch {
-          summaryElement.textContent = "Disconnected";
+          if (requestId === refreshRequest) summaryElement.textContent = "Disconnected";
         }
       };
 

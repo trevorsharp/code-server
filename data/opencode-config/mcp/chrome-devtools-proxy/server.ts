@@ -18,6 +18,9 @@ type SocketData = {
 const port = Number(process.env.CHROME_DEVTOOLS_PROXY_PORT || 9222);
 const instances = new Map<string, Instance>();
 const dashboard = Bun.file(`${import.meta.dir}/index.html`);
+const version = Bun.hash(
+  await Bun.file(`${import.meta.dir}/server.ts`).text(),
+).toString(16);
 
 const json = (value: unknown, status = 200) =>
   Response.json(value, {
@@ -109,9 +112,7 @@ const loadInstance = async (instance: Instance, request: Request) => {
       request,
     ) as Array<Record<string, unknown>>;
     const targets = rewrittenTargets
-      .filter(
-        (target) => target.type === "page" && target.url !== "about:blank",
-      )
+      .filter((target) => target.type === "page")
       .map((target) => ({
         ...target,
         inspectUrl:
@@ -141,7 +142,9 @@ const server = Bun.serve<SocketData>({
     const url = new URL(request.url);
 
     if (url.pathname === "/") return new Response(dashboard);
-    if (url.pathname === "/healthz") return json({ ok: true });
+    if (url.pathname === "/healthz") {
+      return json({ ok: true, pid: process.pid, version });
+    }
 
     if (url.pathname === "/api/instances" && request.method === "GET") {
       const active = await Promise.all(
@@ -156,12 +159,15 @@ const server = Bun.serve<SocketData>({
       try {
         const instance = (await request.json()) as Instance;
         if (
+          typeof instance.id !== "string" ||
           !/^[a-zA-Z0-9-]{1,64}$/.test(instance.id) ||
           !Number.isInteger(instance.port) ||
           instance.port < 1 ||
           instance.port > 65535 ||
           !Number.isInteger(instance.pid) ||
-          instance.pid < 1
+          instance.pid < 1 ||
+          typeof instance.startedAt !== "string" ||
+          !Number.isFinite(Date.parse(instance.startedAt))
         ) {
           return json({ error: "Invalid instance" }, 400);
         }
@@ -180,6 +186,100 @@ const server = Bun.serve<SocketData>({
     if (deleteMatch && request.method === "DELETE") {
       instances.delete(decodeURIComponent(deleteMatch[1]));
       return new Response(null, { status: 204 });
+    }
+
+    const newTabMatch = url.pathname.match(/^\/api\/instances\/([^/]+)\/tabs$/);
+    if (newTabMatch && request.method === "POST") {
+      const instanceId = decodeURIComponent(newTabMatch[1]);
+      const instance = instances.get(instanceId);
+      if (!instance) return json({ error: "Instance not found" }, 404);
+      const origin = request.headers.get("origin");
+      const { protocol, host } = externalOrigin(request);
+      if (origin && origin !== `${protocol}://${host}`) {
+        return json({ error: "Cross-origin requests are not allowed" }, 403);
+      }
+
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:${instance.port}/json/new?about:blank`,
+          {
+            method: "PUT",
+            signal: AbortSignal.timeout(2000),
+          },
+        );
+        if (!response.ok) throw new Error(`CDP returned ${response.status}`);
+
+        const target = rewriteCdpPayload(
+          await response.json(),
+          instance.id,
+          request,
+        ) as Record<string, unknown>;
+        return json(
+          {
+            ...target,
+            inspectUrl:
+              typeof target.devtoolsFrontendUrl === "string"
+                ? target.devtoolsFrontendUrl
+                : undefined,
+          },
+          201,
+        );
+      } catch (error) {
+        return json(
+          {
+            error:
+              error instanceof Error ? error.message : "Failed to create tab",
+          },
+          502,
+        );
+      }
+    }
+
+    const closeTabMatch = url.pathname.match(
+      /^\/api\/instances\/([^/]+)\/tabs\/([^/]+)$/,
+    );
+    if (closeTabMatch && request.method === "DELETE") {
+      const instanceId = decodeURIComponent(closeTabMatch[1]);
+      const targetId = decodeURIComponent(closeTabMatch[2]);
+      const instance = instances.get(instanceId);
+      if (!instance) return json({ error: "Instance not found" }, 404);
+      const origin = request.headers.get("origin");
+      const { protocol, host } = externalOrigin(request);
+      if (origin && origin !== `${protocol}://${host}`) {
+        return json({ error: "Cross-origin requests are not allowed" }, 403);
+      }
+
+      try {
+        const targetsResponse = await fetch(
+          `http://127.0.0.1:${instance.port}/json/list`,
+          { signal: AbortSignal.timeout(2000) },
+        );
+        if (!targetsResponse.ok) {
+          throw new Error(`CDP returned ${targetsResponse.status}`);
+        }
+        const targets = (await targetsResponse.json()) as Array<{
+          id?: string;
+          type?: string;
+        }>;
+        if (!targets.some((target) => target.id === targetId && target.type === "page")) {
+          return json({ error: "Tab not found" }, 404);
+        }
+
+        const response = await fetch(
+          `http://127.0.0.1:${instance.port}/json/close/${encodeURIComponent(targetId)}`,
+          { signal: AbortSignal.timeout(2000) },
+        );
+        if (!response.ok) throw new Error(`CDP returned ${response.status}`);
+        return new Response(null, { status: 204 });
+      } catch (error) {
+        return json(
+          {
+            error:
+              error instanceof Error ? error.message : "Failed to close tab",
+          },
+          502,
+        );
+      }
     }
 
     const route = instanceFromPath(url.pathname);
