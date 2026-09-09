@@ -74,7 +74,7 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | b
 
 # Install Bun
 ENV BUN_INSTALL=/home/${USERNAME}/.bun
-RUN curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14"
 
 # Install OpenCode
 RUN curl -fsSL https://opencode.ai/install | bash

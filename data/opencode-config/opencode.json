@@ -3,7 +3,8 @@
   "share": "disabled",
   "enabled_providers": [
     "openai",
-    "claude-cli"
+    "claude-cli",
+    "github-copilot"
   ],
   "provider": {
     "openai": {
@@ -14,7 +15,17 @@
     },
     "claude-cli": {
       "whitelist": [
-        "claude-fable-5-1"
+        "claude-fable-5-1",
+        "claude-opus-5"
+      ]
+    },
+    "github-copilot": {
+      "whitelist": [
+        "gpt-5.6-sol",
+        "gpt-5.6-luna",
+        "gpt-6-astra",
+        "claude-opus-5",
+        "gemini-3.8-flash"
       ]
     }
   },
