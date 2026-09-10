@@ -552,12 +552,12 @@ function runDescription(
   cfg: WorkflowConfig,
   variantsBySlug: Map<string, string[]>,
 ): string {
-  return `Run a model-neutral multi-agent orchestration script in the background. Use workflow_run whenever delegation helps, including a one-off agent. It is especially useful for parallel research, reviews with adversarial verification, migrations, audits, broad sweeps, and comparing independent attempts. No user opt-in is required.
+  return `Run a model-neutral multi-agent orchestration script in the background. Use workflow_run whenever delegation helps, including a one-off agent. It is especially useful for parallel research, reviews, migrations, audits, broad sweeps, and comparing independent attempts. No user opt-in is required.
 
 HOW IT RUNS: workflow_run returns immediately with a run ID while the script continues in the background. Completion or failure will inject a synthetic message into this session. After starting a workflow, conclude the current turn with a brief progress update rather than continuing overlapping work. Do not wait, poll, or sleep; use workflow_status only when the user explicitly requests progress. A child's final output is raw workflow return data, not a user-facing response. You must synthesize the workflow result for the user. In-flight runs do not survive an opencode server restart.
 
 SCRIPT SOURCE: provide exactly one of \`script\` or \`scriptPath\`. A scriptPath is read fresh and copied into the new run's artifacts; this is iteration, not a saved-workflow registry. Inline scripts are also persisted as script.js. Use sentence case for workflow names, phase titles, and agent labels. Every script must BEGIN exactly with a pure literal:
-  export const meta = { name: "Review files", description: "Review files and verify findings", phases: [{ title: "Review" }, { title: "Verify", detail: "Refute candidate findings" }] }
+  export const meta = { name: "Review files", description: "Review files for actionable findings", phases: [{ title: "Review" }] }
 Then write plain JavaScript forming an async function body. Metadata admits only literal data: name and description are required; phases is optional and contains {title, detail?}. Variables, calls, spreads, template literals, interpolation, and model fields are rejected. No imports or TypeScript. Workflow scripts must not use filesystem, Node APIs, fetch, or hidden globals. Return a JSON-serializable value.
 
 INJECTED PRIMITIVES:
@@ -573,109 +573,44 @@ ${
     system: additional child system text
     schema: JSON Schema passed through opencode's native structured-output format with two retries; returns AssistantMessage.structured
     phase: declared meta.phases title. Prefer opts.phase inside concurrent callbacks.
-- await pipeline(items, ...stages) -> array. DEFAULT for multi-stage work. Every item advances independently through stages; item A may be verified while item B is still being discovered. Each stage receives (previousResult, originalItem, index).
+- await pipeline(items, ...stages) -> array. DEFAULT for multi-stage work. Every item advances independently through stages; item A may enter its next stage while item B is still in its first. Each stage receives (previousResult, originalItem, index).
 - await parallel(thunks) -> array. Runs zero-argument functions concurrently and waits for all.
 - phase(title): sets the default phase for later agent calls. Use only in sequential code; concurrent callbacks should use opts.phase.
 - log(message), await sleep(ms), args (the tool's JSON args), runId.
 
-PHASES: meta.phases is an ordered coarse progress plan, normally 2-8 entries. It controls cards only, not model routing. Attribute calls with opts.phase or phase(). Keep labels short. A workflow normally discovers its own scope rather than requiring inline scouting first. For large multi-phase work, prefer separate focused workflows and let the main agent inspect each result and decide what workflow to run next.
+PHASES: meta.phases is an ordered coarse progress plan. Use only the phases the task needs; a single phase is fine. It controls cards only, not model routing. Attribute calls with opts.phase or phase(). Keep labels short. A workflow normally discovers its own scope rather than requiring inline scouting first. For large multi-phase work, prefer separate focused workflows and let the main agent inspect each result and decide what workflow to run next.
 
 BARRIERS: pipeline is the default. A barrier is valid only when the next operation truly requires the complete prior set: global deduplication/ranking, synthesis across all evidence, a completeness decision, an early exit based on total count, or a main-agent decision between phases. Invalid reasons include matching phase names, visual organization, "finish research before review," or batching work that can be checked item-by-item. Smell test: can result B start its next operation before result A finishes? If yes, a barrier is unnecessary.
-- Invalid: \`const reviews = await parallel(files.map(file => () => review(file))); const checks = await parallel(reviews.flatMap(review => review.findings.map(finding => () => verify(finding))))\`. Verification waits for the slowest review.
-- Rewrite: \`await pipeline(files, (_, file) => review(file), review => parallel(review.findings.map(finding => () => verify(finding))))\`. Findings stream into verification.
+- Invalid: \`const outlines = await parallel(topics.map(topic => () => outline(topic))); const drafts = await parallel(outlines.map(outline => () => draft(outline)))\`. Drafting waits for the slowest outline.
+- Rewrite: \`await pipeline(topics, (_, topic) => outline(topic), outline => draft(outline))\`. Each draft starts as soon as its outline is ready.
 - Valid: \`const reports = await parallel(sources.map(source => () => research(source))); return agent("Synthesize every report: " + JSON.stringify(reports), ...)\` because synthesis needs the full set.
 
 WORKFLOW TAXONOMY:
 - Understand: investigate unfamiliar code, map behavior and dependencies, then synthesize an explanation. Parallelize independent areas; avoid premature design.
 - Design: produce independent designs under the same constraints, critique tradeoffs, then synthesize a chosen design. Keep implementation out unless requested.
-- Review: divide by meaningful quality dimensions, report concrete evidence, and adversarially verify candidates before presenting findings.
+- Review: inspect the relevant scope, divide by meaningful quality dimensions when useful, and report prioritized findings with concrete evidence.
 - Research: investigate independent sources or hypotheses in parallel, preserve citations/evidence, then reconcile conflicts and gaps.
 - Migrate: inventory the full scope, transform independent units, validate each as soon as it completes, then run a global completeness check.
 
 QUALITY PATTERNS:
-- Canonical review: assign dimensions such as correctness, security, concurrency, data integrity, API compatibility, and tests. Stream each dimension's candidates immediately into an adversarial verifier that tries to refute them from source evidence.
-- Majority-vote refutation: use multiple independent skeptics per claim; retain it only when the required majority fails to refute it. Record dissent, not just the vote.
-- Perspective-diverse verification: verify from distinct failure perspectives rather than duplicating the same prompt.
-- Judge panel: create independent attempts, score every attempt in parallel against explicit criteria, then synthesize a result that uses the winner while grafting in stronger ideas from runners-up.
 - Loop-until-count: continue independent discovery until the requested number of unique, supported results is reached; dedupe before counting.
 - Loop-until-dry: continue until consecutive rounds produce no new findings. Dedupe against ALL previously seen candidates, including rejected ones, so rediscovery does not fake progress.
 - Multi-modal sweep: combine structural search, behavioral tracing, history/docs, tests, and boundary analysis; different methods expose different misses.
-- Completeness critic: give a critic the scope and all seen results, ask what is missing, then feed its uncovered dimensions into another discovery/verification round.
 - Never impose a silent coverage cap. If the user asks for exhaustive or comprehensive work, continue to the semantic stop condition or return an explicit limitation.
 
 SCALING: use a workflow size that provides a material advantage over the main agent working directly, while avoiding unnecessary scaling.
 
 - For one bounded lookup, implementation, explanation, or browser task: use just one agent.
-- A task needing independent verification: use one worker and one verifier.
 - Several genuinely independent areas: use one agent per area.
 - Use 5+ agents only when the user requests thorough or exhaustive coverage, the scope contains at least 5 independent units, or the risk justifies multiple independent perspectives.
 
-Start small and escalate only when an agent identifies concrete unresolved scope. Ambiguity alone is not a reason for parallel fan-out; use one investigator to reduce it first. Every concurrent agent must have a distinct question, artifact, area, or verification perspective. Do not create multiple agents that could reasonably receive the same prompt.
+Start small and escalate only when an agent identifies concrete unresolved scope. Ambiguity alone is not a reason for parallel fan-out; use one investigator to reduce it first. Every concurrent agent must have a distinct question, artifact, or area. Do not create multiple agents that could reasonably receive the same prompt.
 
 Agent limits are safety ceilings, not targets.
 
 LIMITS AND RECOVERY: at most ${cfg.maxConcurrency} agents work concurrently and ${cfg.maxAgentsPerRun} may be spawned. A terminal agent failure or timeout cancels the workflow and its other in-flight agents. Always inspect journal.jsonl before speculating about empty or surprising results. Every full prompt, result, failure, and transition is journaled. There is no automatic network retry. An agent request that reaches ${cfg.agentTimeoutMs}ms is aborted and fails the workflow. workflow_cancel ends a running workflow.
 
-${modelSection(cfg, variantsBySlug)}
-
-COMPOSED EXHAUSTIVE-REVIEW EXAMPLE: pass files, dimensions, sweep prompts, and all exact configured profiles through args. Each args.verifiers entry pairs a named perspective with a configured model and variant. Reviews stream into perspective-diverse majority refutation; independent sweeps continue until dry; a completeness critic supplies a final round.
-  export const meta = { name: "Exhaustive review", description: "Exhaustive review with adversarial verification", phases: [
-    { title: "Discover", detail: "Dimension and multi-modal sweeps" },
-    { title: "Verify", detail: "Independent refutation" },
-    { title: "Complete", detail: "Find gaps and run another round" }
-  ] }
-  const FINDINGS = { type: "object", required: ["findings"], properties: { findings: { type: "array", items: {
-    type: "object", required: ["file", "line", "summary", "evidence"], properties: {
-      file: { type: "string" }, line: { type: "integer" },
-      summary: { type: "string" }, evidence: { type: "string" } } } } } }
-  const VERDICT = { type: "object", required: ["refuted", "reason"], properties: {
-    refuted: { type: "boolean" }, reason: { type: "string" } } }
-  const GAPS = { type: "object", required: ["dimensions"], properties: {
-    dimensions: { type: "array", items: { type: "string" } } } }
-  const seen = new Map()
-  const normalize = value => String(value ?? "").toLowerCase().replace(/\\s+/g, " ").trim()
-  const findingKey = finding => JSON.stringify([
-    normalize(finding.file), Number(finding.line), normalize(finding.summary), normalize(finding.evidence)
-  ])
-  const verify = async finding => {
-    const key = findingKey(finding)
-    if (seen.has(key)) return null
-    seen.set(key, finding)
-    const votes = await parallel(args.verifiers.map(verifier => () => agent(
-      "Try to refute this candidate from repository evidence. Perspective: " + verifier.perspective + "\\nCandidate: " + JSON.stringify(finding),
-      { label: "Refute " + finding.file + ":" + finding.line + " " + verifier.perspective, phase: "Verify", model: verifier.model, variant: verifier.variant, schema: VERDICT }
-    )))
-    const valid = votes.filter(Boolean)
-    const refutations = valid.filter(vote => vote.refuted).length
-    return valid.length > 0 && refutations < Math.ceil(valid.length / 2) ? { ...finding, verification: valid } : null
-  }
-  const discover = dimensions => pipeline(
-    dimensions,
-    (_, dimension) => agent(
-      "Review these files only for " + dimension + ". Return concrete supported candidates: " + JSON.stringify(args.files),
-      { label: "Review " + dimension, phase: "Discover", model: args.reviewer.model, variant: args.reviewer.variant, schema: FINDINGS }
-    ),
-    report => parallel((report?.findings ?? []).map(finding => () => verify(finding)))
-  )
-  const confirmed = (await discover(args.dimensions)).filter(Boolean).flat().filter(Boolean)
-  let dryRounds = 0
-  while (dryRounds < 2) {
-    const before = seen.size
-    const sweeps = await parallel(args.sweeps.map((sweep, index) => () => agent(
-      sweep + "\\nFiles: " + JSON.stringify(args.files) + "\\nAlready seen candidates: " + JSON.stringify([...seen.values()]),
-      { label: "Sweep " + index, phase: "Discover", model: args.finder.model, variant: args.finder.variant, schema: FINDINGS }
-    )))
-    const checked = await parallel(sweeps.filter(Boolean).flatMap(report => report.findings.map(finding => () => verify(finding))))
-    confirmed.push(...checked.filter(Boolean))
-    dryRounds = seen.size === before ? dryRounds + 1 : 0
-  }
-  const gaps = await agent(
-    "Critique completeness. Identify uncovered review dimensions from the scope and all seen candidates: " + JSON.stringify({ files: args.files, seen: [...seen.values()] }),
-    { label: "Completeness", phase: "Complete", model: args.critic.model, variant: args.critic.variant, schema: GAPS }
-  )
-  if (gaps?.dimensions?.length) confirmed.push(...(await discover(gaps.dimensions)).filter(Boolean).flat().filter(Boolean))
-  log(confirmed.length + " confirmed unique findings")
-  return { confirmed, seen: seen.size }`;
+${modelSection(cfg, variantsBySlug)}`;
 }
 
 const STATUS_DESCRIPTION = `Check background workflows. Without runId, lists recent runs. With runId, returns phases, agents, recent logs, and a finished result or error. Running disk state without a live run is "interrupted" after server restart. Do not poll; completed workflows announce themselves.`;
