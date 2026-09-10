@@ -100,7 +100,7 @@
     },
     "Datadog": {
       "type": "remote",
-      "url": "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp",
+      "url": "https://mcp.datadoghq.com/v1/mcp",
       "enabled": false
     },
     "Chrome DevTools": {
