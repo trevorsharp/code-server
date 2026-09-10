@@ -3,19 +3,19 @@
   "enabled": true,
   "models": [
     {
-      "slug": "openai/gpt-5.6-sol",
+      "slug": "openai/gpt-6-astra",
       "variant": "medium",
-      "note": "The primary implementer and generalist. Use for code analysis, requirements, implementation, refactoring, debugging, synthesis, adjudicating review findings, and independently verifying outcomes. Default to this profile when another profile does not clearly fit."
+      "note": "Planner, strategist, reviewer"
     },
     {
       "slug": "openai/gpt-5.6-luna",
       "variant": "high",
-      "note": "The cost-efficient high-throughput explorer. Use for browser use and bounded data-source investigations where it can gather evidence cheaply. Provide an explicit instructions, success criteria, and stop conditions. For critical tasks, require reconciliation or independent validation afterwards. Treat it as an evidence runner rather than the sole authority for ambiguous or consequential conclusions."
+      "note": "Web researcher, evidence gatherer, browser user"
     },
     {
-      "slug": "openai/gpt-6-astra",
-      "variant": "high",
-      "note": "The high-leverage planner and adversarial reviewer. Use judiciously for architecture, design, code review, challenging assumptions, identifying risks, finding simplifications, and reviewing work."
+      "slug": "claude-cli/fable-5-1",
+      "variant": "low",
+      "note": "Implementer, secondary reviewer"
     }
   ],
   "maxConcurrency": 8,
