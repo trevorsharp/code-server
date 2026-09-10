@@ -1,21 +1,20 @@
 {
-  "$comment": "Config for the workflow plugin (~/.config/opencode/plugins/workflow.ts). A project can override any key via <worktree>/.opencode/workflow.json. Restart opencode after editing because model profiles are baked into the tool description at startup. 'models' is the allowlist of exact model and reasoning-variant pairs for workflow agents; each optional 'note' guides when to select that profile and name distinct verifier perspectives. Empty list means agents use the session default model.",
   "enabled": true,
   "models": [
     {
+      "slug": "openai/gpt-5.6-sol",
+      "variant": "medium",
+      "note": "General-purpose worker for implementation, code tracing, and debugging. Default for well-defined development tasks."
+    },
+    {
       "slug": "openai/gpt-6-astra",
       "variant": "medium",
-      "note": "Planner, strategist, reviewer"
+      "note": "Quality-first worker for complex planning, architecture, difficult diagnosis, and comprehensive review. Default for ambiguous or high-stakes tasks."
     },
     {
-      "slug": "openai/gpt-5.6-luna",
-      "variant": "high",
-      "note": "Web researcher, evidence gatherer, browser user"
-    },
-    {
-      "slug": "claude-cli/claude-fable-5-1",
-      "variant": "low",
-      "note": "Implementer, secondary reviewer"
+      "slug": "github-copilot/gemini-3.8-flash",
+      "variant": "medium",
+      "note": "Fast worker for browser interaction, evidence gathering, and bounded data exploration. Prefer when tasks are straightforward and readily verifiable."
     }
   ],
   "maxConcurrency": 8,
