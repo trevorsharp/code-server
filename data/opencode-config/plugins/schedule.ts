@@ -72,7 +72,7 @@ type CronSpec = {
 
 const DEFAULT_CONFIG: ScheduleConfig = {
   enabled: true,
-  triggerModel: "openai/gpt-5.6-luna",
+  triggerModel: "openai/gpt-5.6-luna-fast",
   triggerVariant: "high",
   workModel: "openai/gpt-5.6-sol",
   workVariant: "high",

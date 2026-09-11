@@ -126,6 +126,11 @@ const SCRIPT_PARAMS = [
 const META_PREFIX = "export const meta =";
 const CHILD_SYSTEM =
   "Your final reply is raw workflow return data consumed by an orchestration script, not a message to the user.";
+const WORKFLOW_TOOL_IDS = [
+  "workflow_run",
+  "workflow_status",
+  "workflow_cancel",
+] as const;
 const liveRuns = new Map<string, Run>();
 
 // ---------------------------------------------------------------------------
@@ -465,6 +470,15 @@ function parseModelSlug(slug: string): { providerID: string; modelID: string } {
   return { providerID: slug.slice(0, idx), modelID: slug.slice(idx + 1) };
 }
 
+function formatModelSlug(
+  model:
+    | { providerID: string; modelID: string }
+    | { providerID: string; id: string },
+): string {
+  const modelID = "modelID" in model ? model.modelID : model.id;
+  return `${model.providerID}/${modelID}`;
+}
+
 function sentenceCase(value: string): string {
   const trimmed = value.trim();
   return trimmed ? trimmed[0].toUpperCase() + trimmed.slice(1) : trimmed;
@@ -634,6 +648,7 @@ export const WorkflowPlugin: Plugin = async ({
   }
   fs.mkdirSync(cfg.dataDir, { recursive: true });
   const allowedModels = new Set(cfg.models.map((m) => m.slug));
+  let defaultModelSlug: string | undefined;
 
   // Discover reasoning-effort variants for allowlisted models so the tool
   // description and opts.variant validation reflect reality. Providers are
@@ -1355,6 +1370,32 @@ export const WorkflowPlugin: Plugin = async ({
   }
 
   return {
+    config: async (config: { model?: string }) => {
+      defaultModelSlug = config.model;
+    },
+    "chat.message": async (
+      input: {
+        model?: { providerID: string; modelID: string };
+      },
+      output: {
+        message: {
+          model: { providerID: string; modelID: string };
+          tools?: Record<string, boolean>;
+        };
+      },
+    ) => {
+      const activeModel = input.model ?? output.message.model;
+      if (
+        defaultModelSlug &&
+        formatModelSlug(activeModel) === defaultModelSlug
+      ) {
+        return;
+      }
+      output.message.tools ??= {};
+      for (const toolID of WORKFLOW_TOOL_IDS) {
+        output.message.tools[toolID] = false;
+      }
+    },
     // The UI's workflow-card Cancel button flips metadata.workflow.cancelRequested
     // on the card part via the public updatePart endpoint; react to that event.
     event: async ({ event }: { event: any }) => {
@@ -1367,13 +1408,22 @@ export const WorkflowPlugin: Plugin = async ({
       cancelRun(run, "ui cancel button");
     },
     "experimental.chat.system.transform": async (
-      input: { sessionID?: string },
+      input: {
+        sessionID?: string;
+        model: { providerID: string; id: string };
+      },
       output: { system: string[] },
     ) => {
       const isWorkflowChild = [...liveRuns.values()].some(
         (run) => input.sessionID && run.activeSessions.has(input.sessionID),
       );
-      if (isWorkflowChild) return;
+      if (
+        isWorkflowChild ||
+        !defaultModelSlug ||
+        formatModelSlug(input.model) !== defaultModelSlug
+      ) {
+        return;
+      }
       output.system.push(
         "Use workflow_run whenever delegation helps, including for a single agent.",
       );

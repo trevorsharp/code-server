@@ -7,12 +7,12 @@
       "note": "General-purpose worker for implementation, code tracing, and debugging. Default for well-defined development tasks."
     },
     {
-      "slug": "openai/gpt-6-astra",
+      "slug": "claude-cli/claude-fable-5-1",
       "variant": "medium",
       "note": "Quality-first worker for complex planning, architecture, difficult diagnosis, and comprehensive review. Default for ambiguous or high-stakes tasks."
     },
     {
-      "slug": "github-copilot/gemini-3.8-flash",
+      "slug": "openai/gpt-5.6-luna-fast",
       "variant": "medium",
       "note": "Fast worker for browser interaction, evidence gathering, and bounded data exploration. Prefer when tasks are straightforward and readily verifiable."
     }
