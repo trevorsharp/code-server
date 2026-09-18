@@ -19,8 +19,10 @@ import { tool, type Plugin } from "@opencode-ai/plugin";
 //
 // Config (~/.config/opencode/workflow.json; project override in
 // <worktree>/.opencode/workflow.json; restart after edits):
-//   models          allowlist for agent profiles: [{slug, name, variant, note}] —
-//                   baked into the tool description; empty = session default
+//   models          required allowlist of agent profiles: [{slug, variants}] —
+//                   every slug+variant pair is baked into the tool description
+//   modelGuidance   required prose on model selection/orchestration, included
+//                   once in the tool description; must not cover variants
 //   maxConcurrency  agents in flight per run (default 8)
 //   maxAgentsPerRun hard cap per run (default 100)
 //   agentTimeoutMs  maximum agent working duration (default 30 min)
@@ -34,13 +36,13 @@ import { tool, type Plugin } from "@opencode-ai/plugin";
 
 type ModelEntry = {
   slug: string;
-  variant: string;
-  note?: string;
+  variants: string[];
 };
 
 type WorkflowConfig = {
   enabled: boolean;
   models: ModelEntry[];
+  modelGuidance: string;
   maxConcurrency: number;
   maxAgentsPerRun: number;
   agentTimeoutMs: number;
@@ -135,6 +137,7 @@ const liveRuns = new Map<string, Run>();
 const DEFAULT_CONFIG: WorkflowConfig = {
   enabled: true,
   models: [],
+  modelGuidance: "",
   maxConcurrency: 8,
   maxAgentsPerRun: 100,
   agentTimeoutMs: 1_800_000,
@@ -161,15 +164,75 @@ function loadConfig(worktree: string | undefined): WorkflowConfig {
       {})
     : {};
   const merged = { ...DEFAULT_CONFIG, ...globalCfg, ...projectCfg };
-  merged.models = Array.isArray(merged.models)
-    ? merged.models.filter(
-        (model: any) =>
-          model &&
-          typeof model.slug === "string" &&
-          typeof model.variant === "string",
-      )
-    : [];
+  if (!merged.enabled) return merged;
+  const problems = validateConfig(merged);
+  if (problems.length > 0) {
+    throw new Error(
+      `[workflow plugin] invalid workflow.json (~/.config/opencode/workflow.json or <worktree>/.opencode/workflow.json):\n  - ${problems.join("\n  - ")}`,
+    );
+  }
   return merged;
+}
+
+function validateConfig(cfg: any): string[] {
+  const problems: string[] = [];
+  if (!Array.isArray(cfg.models) || cfg.models.length === 0) {
+    problems.push(
+      "models must be a non-empty array of {slug, variants: string[]} entries",
+    );
+  } else {
+    const seenSlugs = new Set<string>();
+    cfg.models.forEach((model: any, index: number) => {
+      const where = `models[${index}]`;
+      if (!model || typeof model !== "object" || Array.isArray(model)) {
+        problems.push(`${where} must be an object {slug, variants: string[]}`);
+        return;
+      }
+      if (typeof model.slug !== "string" || model.slug.trim() === "") {
+        problems.push(
+          `${where}.slug must be a non-blank "provider/model" string`,
+        );
+      } else if (seenSlugs.has(model.slug)) {
+        problems.push(
+          `${where}.slug "${model.slug}" is duplicated; list each slug once with all of its variants`,
+        );
+      } else {
+        seenSlugs.add(model.slug);
+      }
+      if ("variant" in model || "note" in model) {
+        problems.push(
+          `${where} uses the legacy {slug, variant, note} shape; replace "variant" with "variants": [...] and move any "note" text into the top-level "modelGuidance"`,
+        );
+      }
+      if (!Array.isArray(model.variants) || model.variants.length === 0) {
+        problems.push(`${where}.variants must be a non-empty array of strings`);
+        return;
+      }
+      const seenVariants = new Set<string>();
+      model.variants.forEach((variant: any, variantIndex: number) => {
+        if (typeof variant !== "string" || variant.trim() === "") {
+          problems.push(
+            `${where}.variants[${variantIndex}] must be a non-blank string`,
+          );
+        } else if (seenVariants.has(variant)) {
+          problems.push(
+            `${where}.variants contains "${variant}" more than once`,
+          );
+        } else {
+          seenVariants.add(variant);
+        }
+      });
+    });
+  }
+  if (
+    typeof cfg.modelGuidance !== "string" ||
+    cfg.modelGuidance.trim() === ""
+  ) {
+    problems.push(
+      "modelGuidance must be a non-blank string describing model selection and orchestration",
+    );
+  }
+  return problems;
 }
 
 // ---------------------------------------------------------------------------
@@ -530,22 +593,27 @@ function journal(run: Run, entry: Record<string, any>) {
 // Tool descriptions
 // ---------------------------------------------------------------------------
 
+function configuredPairs(cfg: WorkflowConfig): string[] {
+  return cfg.models.flatMap((model) =>
+    model.variants.map((variant) => `${model.slug} (${variant})`),
+  );
+}
+
 function modelSection(
   cfg: WorkflowConfig,
   variantsBySlug: Map<string, string[]>,
 ): string {
-  if (cfg.models.length === 0) {
-    return `MODEL PROFILES: no allowlist is configured, so omit opts.model and opts.variant (agents use the session default model). To enable per-agent model selection, add profiles to ~/.config/opencode/workflow.json and restart opencode.`;
-  }
-  const lines = cfg.models.map((model) => {
+  const lines = cfg.models.flatMap((model) => {
     const knownVariants = variantsBySlug.get(model.slug);
-    const unsupported =
-      knownVariants && !knownVariants.includes(model.variant)
-        ? " [unsupported variant]"
-        : "";
-    return `  - model: "${model.slug}", variant: "${model.variant}"${unsupported}${model.note ? ` — ${model.note}` : ""}`;
+    return model.variants.map((variant) => {
+      const unsupported =
+        knownVariants && !knownVariants.includes(variant)
+          ? " [unsupported variant]"
+          : "";
+      return `  - model: "${model.slug}", variant: "${variant}"${unsupported}`;
+    });
   });
-  return `MODEL PROFILES — every agent() call must explicitly declare an exact model and variant pair from this list (pick deliberately per the notes; never rely on a default):\n${lines.join("\n")}\n(Profiles configured in ~/.config/opencode/workflow.json; edits require an opencode restart.)`;
+  return `MODEL PROFILES — every agent() call must explicitly declare opts.model and opts.variant as one exact pair from this list. There is no default or fallback pair: for each call, choose the model and the variant deliberately from the pairs that model supports. Allowed pairs:\n${lines.join("\n")}\n\nMODEL GUIDANCE: ${cfg.modelGuidance.trim()}\n(Profiles and guidance are configured in ~/.config/opencode/workflow.json; edits require an opencode restart.)`;
 }
 
 function runDescription(
@@ -563,13 +631,8 @@ Then write plain JavaScript forming an async function body. Metadata admits only
 INJECTED PRIMITIVES:
 - await agent(prompt, opts?) -> raw text or structured data when opts.schema is set. A terminal agent failure cancels the remaining workflow and reports the failure to the parent session. Each call creates a nested child session in the current project. Children cannot see this conversation or script, so prompts must be self-contained. Children inherit available session tools and MCP integrations, except workflow tools are disabled to prevent recursion.
     label: short sentence-case child title and journal label
-${
-  cfg.models.length > 0
-    ? `    model: REQUIRED exact slug from MODEL PROFILES
-    variant: REQUIRED exact variant paired with that slug`
-    : `    model: omit when no profiles are configured
-    variant: omit when no profiles are configured`
-}
+    model: REQUIRED exact slug from MODEL PROFILES
+    variant: REQUIRED exact variant listed for that slug in MODEL PROFILES
     system: additional child system text
     schema: JSON Schema passed through opencode's native structured-output format with two retries; returns AssistantMessage.structured
     phase: declared meta.phases title. Prefer opts.phase inside concurrent callbacks.
@@ -855,48 +918,36 @@ export const WorkflowPlugin: Plugin = async ({
         throw new Error("agent(prompt) requires a non-empty string prompt");
       }
       phase = resolvePhase(run, opts);
-      if (cfg.models.length > 0) {
-        if (!opts.model) {
-          const profiles = cfg.models
-            .map((profile) => `${profile.slug} (${profile.variant})`)
-            .join(", ");
-          throw new Error(
-            `agent("${prompt.slice(0, 40)}...") is missing opts.model; choose from: ${profiles}`,
-          );
-        }
-        if (!opts.variant)
-          throw new Error(
-            `agent("${prompt.slice(0, 40)}...") is missing opts.variant`,
-          );
-        const configuredProfile = cfg.models.some(
-          (profile) =>
-            profile.slug === opts.model && profile.variant === opts.variant,
-        );
-        if (!configuredProfile) {
-          const profiles = cfg.models
-            .map((profile) => `${profile.slug} (${profile.variant})`)
-            .join(", ");
-          throw new Error(
-            `model profile "${opts.model} (${opts.variant})" is not configured; choose from: ${profiles}`,
-          );
-        }
-      } else if (opts.model || opts.variant) {
+      const promptExcerpt = `agent("${prompt.slice(0, 40)}...")`;
+      if (!opts.model) {
         throw new Error(
-          "no model profiles are configured; omit opts.model and opts.variant to use the session default",
+          `${promptExcerpt} is missing opts.model; choose an exact pair from: ${configuredPairs(cfg).join(", ")}`,
         );
       }
-      if (opts.variant && opts.model) {
-        const known = variantsBySlug.get(opts.model);
-        if (known && !known.includes(opts.variant)) {
-          throw new Error(
-            `variant "${opts.variant}" is not supported by ${opts.model}; supported: ${known.join(", ")}`,
-          );
-        }
+      const profile = cfg.models.find((entry) => entry.slug === opts.model);
+      if (!profile) {
+        throw new Error(
+          `${promptExcerpt} requested model "${opts.model}", which is not configured; choose an exact pair from: ${configuredPairs(cfg).join(", ")}`,
+        );
       }
-      const model = opts.model ? parseModelSlug(opts.model) : undefined;
-      const modelLabel = opts.model
-        ? `${opts.model} (${opts.variant})`
-        : "session default";
+      if (!opts.variant) {
+        throw new Error(
+          `${promptExcerpt} is missing opts.variant; ${opts.model} supports: ${profile.variants.join(", ")}`,
+        );
+      }
+      if (!profile.variants.includes(opts.variant)) {
+        throw new Error(
+          `${promptExcerpt} requested variant "${opts.variant}", which is not configured for ${opts.model}; configured variants: ${profile.variants.join(", ")}`,
+        );
+      }
+      const knownVariants = variantsBySlug.get(opts.model);
+      if (knownVariants && !knownVariants.includes(opts.variant)) {
+        throw new Error(
+          `variant "${opts.variant}" is not supported by ${opts.model} according to its provider; supported: ${knownVariants.join(", ")}`,
+        );
+      }
+      const model = parseModelSlug(opts.model);
+      const modelLabel = `${opts.model} (${opts.variant})`;
       if (run.agentsSpawned >= cfg.maxAgentsPerRun) {
         throw new Error(`agent cap reached (${cfg.maxAgentsPerRun} per run)`);
       }
@@ -988,8 +1039,8 @@ export const WorkflowPlugin: Plugin = async ({
           query: { directory: run.directory },
           body: {
             parts: [{ type: "text", text: prompt }],
-            ...(model ? { model } : {}),
-            ...(opts.variant ? { variant: opts.variant } : {}),
+            model,
+            variant: opts.variant,
             system,
             ...(opts.schema
               ? {

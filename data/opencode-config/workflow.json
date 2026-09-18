@@ -2,26 +2,23 @@
   "enabled": true,
   "models": [
     {
+      "slug": "openai/gpt-5.6-sol",
+      "variants": ["low", "medium", "high"]
+    },
+    {
       "slug": "claude-cli/claude-fable-5-1",
-      "variant": "medium",
-      "note": "Default #1 for all coding tasks (planning, architecture, implementation, and review). Use interchangably with Astra for varied results."
+      "variants": ["low", "medium", "high"]
     },
     {
       "slug": "openai/gpt-6-astra",
-      "variant": "medium",
-      "note": "Default #2 for all coding tasks (planning, architecture, implementation, and review). Use interchangably with Fable for varied results."
-    },
-    {
-      "slug": "openai/gpt-5.6-sol",
-      "variant": "medium",
-      "note": "Default for all non-coding tasks (analysis, documentation, testing)."
+      "variants": ["low", "medium", "high"]
     },
     {
       "slug": "openai/gpt-5.6-luna-fast",
-      "variant": "medium",
-      "note": "Default for browser use, web research, and data gathering. This is the only model allowed for browser use."
+      "variants": ["medium", "high"]
     }
   ],
+  "modelGuidance": "Luna is the lowest-cost, fastest model in this workflow. Use it for token-intensive work that requires gathering, filtering, or organizing evidence but little independent judgment. Typical uses include browser interaction, web research, session-history retrieval, broad inventories, and extracting facts from many files or records. It is the only model allowed to use browser tools. Luna should report evidence, source locations, and coverage gaps rather than make consequential technical decisions from incomplete evidence.\n\nSol is the balanced general-purpose model. It is more appropriate than Luna when the task requires understanding code, applying a repository's existing patterns, or synthesizing evidence, but does not justify the additional cost and latency of Fable or Astra. Use Sol as the normal starting point for engineering work.\n\nFable and Astra are the highest-capability models available to this workflow. Use them when additional reasoning quality is likely to justify their cost and latency. Both are eligible for difficult investigation, architecture design, implementation, and review. They come from different model families, so using one to review consequential work produced by the other can provide a genuinely different perspective. Do not use both merely to increase agent count.",
   "maxConcurrency": 8,
   "maxAgentsPerRun": 100,
   "agentTimeoutMs": 3600000
