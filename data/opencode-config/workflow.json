@@ -2,19 +2,24 @@
   "enabled": true,
   "models": [
     {
-      "slug": "openai/gpt-5.6-sol",
-      "variant": "medium",
-      "note": "General-purpose worker for implementation, code tracing, and debugging. Default for well-defined development tasks."
-    },
-    {
       "slug": "claude-cli/claude-fable-5-1",
       "variant": "medium",
-      "note": "Quality-first worker for complex planning, architecture, difficult diagnosis, and comprehensive review. Default for ambiguous or high-stakes tasks."
+      "note": "Default #1 for all coding tasks (planning, architecture, implementation, and review). Use interchangably with Astra for varied results."
+    },
+    {
+      "slug": "openai/gpt-6-astra",
+      "variant": "medium",
+      "note": "Default #2 for all coding tasks (planning, architecture, implementation, and review). Use interchangably with Fable for varied results."
+    },
+    {
+      "slug": "openai/gpt-5.6-sol",
+      "variant": "medium",
+      "note": "Default for all non-coding tasks (analysis, documentation, testing)."
     },
     {
       "slug": "openai/gpt-5.6-luna-fast",
       "variant": "medium",
-      "note": "Fast worker for browser interaction, evidence gathering, and bounded data exploration. Prefer when tasks are straightforward and readily verifiable."
+      "note": "Default for browser use, web research, and data gathering. This is the only model allowed for browser use."
     }
   ],
   "maxConcurrency": 8,
