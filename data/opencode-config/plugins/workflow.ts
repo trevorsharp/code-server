@@ -114,7 +114,7 @@ type Run = {
   cardQueue: Promise<void>;
 };
 
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
 const SCRIPT_PARAMS = [
   "agent",
   "parallel",
@@ -242,7 +242,7 @@ function validateConfig(cfg: any): string[] {
 class Semaphore {
   private active = 0;
   private queue: Array<() => void> = [];
-  constructor(private limit: number) {}
+  constructor(private limit: number) { }
   async acquire(): Promise<() => void> {
     while (this.active >= this.limit) {
       await new Promise<void>((resolve) => this.queue.push(resolve));
@@ -552,11 +552,11 @@ function statusSnapshot(run: Run) {
     agentsFailed: run.agentsFailed,
     phases: run.phases
       ? run.phases.map((phase) => ({
-          title: phase.title,
-          started: phase.started,
-          finished: phase.finished,
-          failed: phase.failed,
-        }))
+        title: phase.title,
+        started: phase.started,
+        finished: phase.finished,
+        failed: phase.failed,
+      }))
       : undefined,
     agents: run.agentRows,
     scriptPath: path.join(run.dir, "script.js"),
@@ -613,65 +613,29 @@ function modelSection(
       return `  - model: "${model.slug}", variant: "${variant}"${unsupported}`;
     });
   });
-  return `MODEL PROFILES — every agent() call must explicitly declare opts.model and opts.variant as one exact pair from this list. There is no default or fallback pair: for each call, choose the model and the variant deliberately from the pairs that model supports. Allowed pairs:\n${lines.join("\n")}\n\nMODEL GUIDANCE: ${cfg.modelGuidance.trim()}\n(Profiles and guidance are configured in ~/.config/opencode/workflow.json; edits require an opencode restart.)`;
+  return `Every agent() call requires an explicit model and variant from these allowed pairs (no fallback):\n${lines.join("\n")}\n\nMODEL GUIDANCE: ${cfg.modelGuidance.trim()}`;
 }
 
 function runDescription(
   cfg: WorkflowConfig,
   variantsBySlug: Map<string, string[]>,
 ): string {
-  return `Run a model-neutral multi-agent orchestration script in the background. Use workflow_run whenever delegation helps, including a one-off agent. It is especially useful for parallel research, reviews, migrations, audits, broad sweeps, and comparing independent attempts. No user opt-in is required.
+  return `Use workflow_run when the user requests a workflow or multi-agent orchestration, or when substantial evidence gathering, filtering, or organizing is better delegated to subagents. Otherwise work directly; do not start workflows merely because a task could be delegated. You are the lead: choose bounded work, inspect results, decide next steps, and answer the user. Fan out only across distinct independent work. Run another focused workflow after reviewing results if needed, rather than scripting a whole project up front. Do not silently cap requested exhaustive work.
 
-HOW IT RUNS: workflow_run returns immediately with a run ID while the script continues in the background. Completion or failure will inject a synthetic message into this session. After starting a workflow, conclude the current turn with a brief progress update rather than continuing overlapping work. Do not wait, poll, or sleep; use workflow_status only when the user explicitly requests progress. A child's final output is raw workflow return data, not a user-facing response. You must synthesize the workflow result for the user. In-flight runs do not survive an opencode server restart.
+Workflows run in the background and return a run ID. Completion or failure notifies this session. After calling, end your turn with a brief progress update; do not poll the status. Use workflow_status only when asked for progress. Runs do not survive a server restart. Use workflow_cancel to stop a run if needed.
 
-SCRIPT SOURCE: provide exactly one of \`script\` or \`scriptPath\`. A scriptPath is read fresh and copied into the new run's artifacts; this is iteration, not a saved-workflow registry. Inline scripts are also persisted as script.js. Use sentence case for workflow names, phase titles, and agent labels. Every script must BEGIN exactly with a pure literal:
-  export const meta = { name: "Review files", description: "Review files for actionable findings", phases: [{ title: "Review" }] }
-Then write plain JavaScript forming an async function body. Metadata admits only literal data: name and description are required; phases is optional and contains {title, detail?}. Variables, calls, spreads, template literals, interpolation, and model fields are rejected. No imports or TypeScript. Workflow scripts must not use filesystem, Node APIs, fetch, or hidden globals. Return a JSON-serializable value.
+Provide exactly one of script or scriptPath (the latter reruns a file read fresh, not a saved workflow). The script must start with a pure-literal \`export const meta = { name: "...", description: "..." }\`; optional phases contain {title, detail?}. Follow it with plain async JavaScript and return JSON-serializable data. No imports, TypeScript, filesystem, Node APIs, fetch, or dynamic metadata.
 
-INJECTED PRIMITIVES:
-- await agent(prompt, opts?) -> raw text or structured data when opts.schema is set. A terminal agent failure cancels the remaining workflow and reports the failure to the parent session. Each call creates a nested child session in the current project. Children cannot see this conversation or script, so prompts must be self-contained. Children inherit available session tools and MCP integrations, except workflow tools are disabled to prevent recursion.
-    label: short sentence-case child title and journal label
-    model: REQUIRED exact slug from MODEL PROFILES
-    variant: REQUIRED exact variant listed for that slug in MODEL PROFILES
-    system: additional child system text
-    schema: JSON Schema passed through opencode's native structured-output format with two retries; returns AssistantMessage.structured
-    phase: declared meta.phases title. Prefer opts.phase inside concurrent callbacks.
-- await pipeline(items, ...stages) -> array. DEFAULT for multi-stage work. Every item advances independently through stages; item A may enter its next stage while item B is still in its first. Each stage receives (previousResult, originalItem, index).
-- await parallel(thunks) -> array. Runs zero-argument functions concurrently and waits for all.
-- phase(title): sets the default phase for later agent calls. Use only in sequential code; concurrent callbacks should use opts.phase.
-- log(message), await sleep(ms), args (the tool's JSON args), runId.
+Example script for parallel investigation; the lead reconciles the reports after completion:
+  export const meta = { name: "Trace wallet history", description: "Inspect wallet changes in UI and payments repositories" }
+  return await parallel([
+    () => agent("Inspect /home/sharp/projects/CheckoutUI git history for digital-wallet changes over the past year. Cite commits and paths; distinguish commits from releases. Do not edit.", { label: "Trace CheckoutUI", model: "openai/gpt-6-luna-fast", variant: "medium" }),
+    () => agent("Inspect /home/sharp/projects/PurchasePayments git history for digital-wallet changes over the past year. Cite commits and paths; distinguish commits from releases. Do not edit.", { label: "Trace PurchasePayments", model: "openai/gpt-6-luna-fast", variant: "medium" }),
+  ])
 
-PHASES: meta.phases is an ordered coarse progress plan. Use only the phases the task needs; a single phase is fine. It controls cards only, not model routing. Attribute calls with opts.phase or phase(). Keep labels short. A workflow normally discovers its own scope rather than requiring inline scouting first. For large multi-phase work, prefer separate focused workflows and let the main agent inspect each result and decide what workflow to run next.
+Script primitives: await agent(prompt, {model, variant, label?, phase?, system?, schema?}) starts a child session; prompts must be self-contained. schema is a JSON Schema for structured output. await parallel(thunks) runs independent zero-argument functions and waits for all. await pipeline(items, ...stages) advances each item independently; stages receive (previousResult, originalItem, index). Use a barrier only when the next step needs all results. phase(title) sets the sequential default; use agent's phase option for concurrent calls. log(message), await sleep(ms), args, and runId are also available. Phases only group progress cards.
 
-BARRIERS: pipeline is the default. A barrier is valid only when the next operation truly requires the complete prior set: global deduplication/ranking, synthesis across all evidence, a completeness decision, an early exit based on total count, or a main-agent decision between phases. Invalid reasons include matching phase names, visual organization, "finish research before review," or batching work that can be checked item-by-item. Smell test: can result B start its next operation before result A finishes? If yes, a barrier is unnecessary.
-- Invalid: \`const outlines = await parallel(topics.map(topic => () => outline(topic))); const drafts = await parallel(outlines.map(outline => () => draft(outline)))\`. Drafting waits for the slowest outline.
-- Rewrite: \`await pipeline(topics, (_, topic) => outline(topic), outline => draft(outline))\`. Each draft starts as soon as its outline is ready.
-- Valid: \`const reports = await parallel(sources.map(source => () => research(source))); return agent("Synthesize every report: " + JSON.stringify(reports), ...)\` because synthesis needs the full set.
-
-WORKFLOW TAXONOMY:
-- Understand: investigate unfamiliar code, map behavior and dependencies, then synthesize an explanation. Parallelize independent areas; avoid premature design.
-- Design: produce independent designs under the same constraints, critique tradeoffs, then synthesize a chosen design. Keep implementation out unless requested.
-- Review: inspect the relevant scope, divide by meaningful quality dimensions when useful, and report prioritized findings with concrete evidence.
-- Research: investigate independent sources or hypotheses in parallel, preserve citations/evidence, then reconcile conflicts and gaps.
-- Migrate: inventory the full scope, transform independent units, validate each as soon as it completes, then run a global completeness check.
-
-QUALITY PATTERNS:
-- Loop-until-count: continue independent discovery until the requested number of unique, supported results is reached; dedupe before counting.
-- Loop-until-dry: continue until consecutive rounds produce no new findings. Dedupe against ALL previously seen candidates, including rejected ones, so rediscovery does not fake progress.
-- Multi-modal sweep: combine structural search, behavioral tracing, history/docs, tests, and boundary analysis; different methods expose different misses.
-- Never impose a silent coverage cap. If the user asks for exhaustive or comprehensive work, continue to the semantic stop condition or return an explicit limitation.
-
-SCALING: use a workflow size that provides a material advantage over the main agent working directly, while avoiding unnecessary scaling.
-
-- For one bounded lookup, implementation, explanation, or browser task: use just one agent.
-- Several genuinely independent areas: use one agent per area.
-- Use 5+ agents only when the user requests thorough or exhaustive coverage, the scope contains at least 5 independent units, or the risk justifies multiple independent perspectives.
-
-Start small and escalate only when an agent identifies concrete unresolved scope. Ambiguity alone is not a reason for parallel fan-out; use one investigator to reduce it first. Every concurrent agent must have a distinct question, artifact, or area. Do not create multiple agents that could reasonably receive the same prompt.
-
-Agent limits are safety ceilings, not targets.
-
-LIMITS AND RECOVERY: at most ${cfg.maxConcurrency} agents work concurrently and ${cfg.maxAgentsPerRun} may be spawned. A terminal agent failure or timeout cancels the workflow and its other in-flight agents. Always inspect journal.jsonl before speculating about empty or surprising results. Every full prompt, result, failure, and transition is journaled. There is no automatic network retry. An agent request that reaches ${cfg.agentTimeoutMs}ms is aborted and fails the workflow. workflow_cancel ends a running workflow.
+Up to ${cfg.maxConcurrency} agents run concurrently and ${cfg.maxAgentsPerRun} may be spawned. A terminal agent failure or timeout (including ${cfg.agentTimeoutMs}ms per call) stops the workflow. Inspect journal.jsonl when results are surprising.
 
 ${modelSection(cfg, variantsBySlug)}`;
 }
@@ -865,7 +829,7 @@ export const WorkflowPlugin: Plugin = async ({
         const ref = await upsertAgentCard(run, runCardBody(run, final));
         if (ref && !run.card) run.card = ref;
       })
-      .catch(() => {});
+      .catch(() => { });
     return run.cardQueue;
   }
 
@@ -888,9 +852,9 @@ export const WorkflowPlugin: Plugin = async ({
   // Script primitives
   // -------------------------------------------------------------------------
 
-  class WorkflowCancelledError extends Error {}
-  class WorkflowFailedError extends Error {}
-  class AgentTimeoutError extends Error {}
+  class WorkflowCancelledError extends Error { }
+  class WorkflowFailedError extends Error { }
+  class AgentTimeoutError extends Error { }
 
   async function runAgent(
     run: Run,
@@ -901,9 +865,9 @@ export const WorkflowPlugin: Plugin = async ({
     const startedAt = Date.now();
     const label = sentenceCase(
       opts.label ??
-        (typeof prompt === "string"
-          ? prompt.replace(/\s+/g, " ").slice(0, 60)
-          : "Agent"),
+      (typeof prompt === "string"
+        ? prompt.replace(/\s+/g, " ").slice(0, 60)
+        : "Agent"),
     );
     let phase: PhaseState | null = null;
     let sessionID: string | undefined;
@@ -1032,7 +996,7 @@ export const WorkflowPlugin: Plugin = async ({
         agentControl.abort = () => {
           (
             client.session.abort({ path: { id: sessionID! } }) as Promise<any>
-          ).catch(() => {});
+          ).catch(() => { });
         };
         const request = client.session.prompt({
           path: { id: sessionID },
@@ -1044,12 +1008,12 @@ export const WorkflowPlugin: Plugin = async ({
             system,
             ...(opts.schema
               ? {
-                  format: {
-                    type: "json_schema",
-                    schema: opts.schema,
-                    retryCount: 2,
-                  },
-                }
+                format: {
+                  type: "json_schema",
+                  schema: opts.schema,
+                  retryCount: 2,
+                },
+              }
               : {}),
             tools: {
               notify: false,
@@ -1287,7 +1251,7 @@ export const WorkflowPlugin: Plugin = async ({
       const excerpt =
         resultJson.length > 6000
           ? resultJson.slice(0, 6000) +
-            "\n... (truncated — full value in result.json)"
+          "\n... (truncated — full value in result.json)"
           : resultJson;
       return `${header}\nResult:\n${excerpt}\n${artifacts}\nThis is an automated completion notification from the workflow plugin, not a user message. Summarize this result for the user now, relating it to what they originally asked for.`;
     }
@@ -1430,7 +1394,7 @@ export const WorkflowPlugin: Plugin = async ({
         return;
       }
       output.system.push(
-        "Use workflow_run whenever delegation helps, including for a single agent.",
+        "Prefer working directly. Use workflow_run when the user requests a workflow or multi-agent orchestration, or when substantial gathering, filtering, or organizing of evidence is better delegated to Luna (such as broad inventories, research, browser work, or session-history analysis). Do not use it merely because a task could be delegated.",
       );
     },
     // Variants load in the background after startup; rebuild the description
@@ -1592,8 +1556,8 @@ export const WorkflowPlugin: Plugin = async ({
           const status = live
             ? statusSnapshot(live)
             : readJsonIfExists(
-                path.join(cfg.dataDir, args.runId, "status.json"),
-              );
+              path.join(cfg.dataDir, args.runId, "status.json"),
+            );
           if (!status) return `No run found with ID ${args.runId}.`;
           if (!live && status.status === "running") {
             status.status = "interrupted";
