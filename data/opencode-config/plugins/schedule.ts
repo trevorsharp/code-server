@@ -72,9 +72,9 @@ type CronSpec = {
 
 const DEFAULT_CONFIG: ScheduleConfig = {
   enabled: true,
-  triggerModel: "openai/gpt-5.6-luna-fast",
+  triggerModel: "openai/gpt-6-luna-fast",
   triggerVariant: "high",
-  workModel: "openai/gpt-5.6-sol",
+  workModel: "openai/gpt-6-sol",
   workVariant: "high",
   dataDir: path.join(
     os.homedir(),
@@ -290,7 +290,7 @@ async function withTimeout<T>(
   try {
     return await Promise.race([promise, timeout]);
   } catch (error) {
-    if (String(error).includes("timed out")) await onTimeout().catch(() => {});
+    if (String(error).includes("timed out")) await onTimeout().catch(() => { });
     throw error;
   } finally {
     clearTimeout(timer);
@@ -342,14 +342,14 @@ export const SchedulePlugin: Plugin = async ({
       Boolean(job.triggerSessionID && live.sessions.has(job.triggerSessionID));
     const triggerAgents = job.triggerSessionID
       ? [
-          {
-            sessionID: job.triggerSessionID,
-            label: "Trigger",
-            model: config.triggerModel,
-            variant: config.triggerVariant,
-            status: triggerRunning ? "running" : "completed",
-          },
-        ]
+        {
+          sessionID: job.triggerSessionID,
+          label: "Trigger",
+          model: config.triggerModel,
+          variant: config.triggerVariant,
+          status: triggerRunning ? "running" : "completed",
+        },
+      ]
       : [];
     const workSessions = job.workSessions ?? [];
     return {
@@ -478,12 +478,12 @@ export const SchedulePlugin: Plugin = async ({
             parts: [{ type: "text", text }],
             ...(schema
               ? {
-                  format: {
-                    type: "json_schema",
-                    schema,
-                    retryCount: 1,
-                  },
-                }
+                format: {
+                  type: "json_schema",
+                  schema,
+                  retryCount: 1,
+                },
+              }
               : {}),
             tools: {
               schedule_create: false,
@@ -492,10 +492,10 @@ export const SchedulePlugin: Plugin = async ({
               schedule_cancel: allowCancel,
               ...(disableWorkflows
                 ? {
-                    workflow_run: false,
-                    workflow_status: false,
-                    workflow_cancel: false,
-                  }
+                  workflow_run: false,
+                  workflow_status: false,
+                  workflow_cancel: false,
+                }
                 : {}),
             },
           },
@@ -536,7 +536,7 @@ export const SchedulePlugin: Plugin = async ({
     if (!job.triggerSessionID) {
       const sessionID = await createSession(job, "Trigger");
       if (job.status !== "running") {
-        await client.session.abort({ path: { id: sessionID } }).catch(() => {});
+        await client.session.abort({ path: { id: sessionID } }).catch(() => { });
         throw new Error(`job is ${job.status}`);
       }
       job.triggerSessionID = sessionID;
@@ -581,7 +581,7 @@ export const SchedulePlugin: Plugin = async ({
     const label = `Work run ${workRunCount}`;
     const sessionID = await createSession(job, label);
     if (job.status !== "running") {
-      await client.session.abort({ path: { id: sessionID } }).catch(() => {});
+      await client.session.abort({ path: { id: sessionID } }).catch(() => { });
       return;
     }
     job.workRunCount = workRunCount;

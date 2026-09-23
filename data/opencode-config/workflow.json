@@ -2,23 +2,35 @@
   "enabled": true,
   "models": [
     {
-      "slug": "openai/gpt-5.6-sol",
-      "variants": ["low", "medium", "high"]
+      "slug": "openai/gpt-6-luna-fast",
+      "variants": [
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "slug": "claude-cli/claude-opus-5-5",
+      "variants": [
+        "medium",
+        "high"
+      ]
     },
     {
       "slug": "claude-cli/claude-fable-5-1",
-      "variants": ["low", "medium", "high"]
+      "variants": [
+        "low",
+        "medium"
+      ]
     },
     {
       "slug": "openai/gpt-6-astra",
-      "variants": ["low", "medium", "high"]
-    },
-    {
-      "slug": "openai/gpt-5.6-luna-fast",
-      "variants": ["medium", "high"]
+      "variants": [
+        "low",
+        "medium"
+      ]
     }
   ],
-  "modelGuidance": "Luna is the lowest-cost, fastest model in this workflow. Use it for token-intensive work that primarily involves gathering, filtering, or organizing evidence, including browser interaction, web research, session-history retrieval, broad inventories, and extracting facts from many files or records. Luna should report evidence, source locations, and coverage gaps rather than make consequential technical decisions from incomplete evidence. It is the only model allowed to use browser tools. When browser work requires engineering judgment, Sol or Fable should direct the investigation and interpret Luna's results.\n\nSol is the balanced general-purpose model and the normal starting point for straightforward engineering work. Use it when the task primarily involves understanding code, applying established repository patterns, routine implementation, or synthesizing evidence. Prefer Sol when the intended approach is clear and existing patterns adequately address the problem. If Sol discovers that existing patterns do not adequately cover the problem, it should hand the task to Fable with its findings rather than improvise a new design.\n\nFable is the preferred model whenever planning, architecture design, implementation, or code writing requires more than applying an established pattern. Use it when no suitable pattern exists, existing patterns are insufficient, requirements are ambiguous or conflicting, or meaningful design tradeoffs must be resolved. Task size alone is not the deciding factor: large but mechanical work may remain with Sol, while small but novel work may warrant Fable.\n\nAstra is available as an independent perspective for reviewing and verifying complex work. Consider it after a substantive plan or implementation exists when challenging assumptions, assessing architectural or behavioral risks, or independently verifying consequential work would provide meaningful value. Work being produced by Fable may make cross-model review useful, but is not by itself a reason to select Astra. Do not use Astra or pair models merely to increase agent count.",
+  "modelGuidance": "Luna is the lowest-cost, fastest workflow model. Use it for token-intensive gathering, filtering, and organizing evidence, including browser interaction, web research, session-history retrieval, broad inventories, and extracting facts from many files or records. Luna should report evidence, source locations, and coverage gaps rather than make consequential technical decisions from incomplete evidence. It is the only workflow model allowed to use browser tools. Fable or Opus should direct investigations requiring engineering judgment and interpret Luna's findings.\n\nFable is the planner for architectural changes, ambiguous or conflicting requirements, and changes spanning multiple areas where existing patterns do not settle the design. Have it map domain rules, evaluate tradeoffs, and define actionable implementation steps and edge-case scenarios. Scope and design complexity, not file count alone, determine whether planning is needed. Do not make a Fable plan a mandatory step for routine changes.\n\nOpus is the default implementation model for delegated coding. Give it the requirements and any agreed design, have it implement the change, run relevant builds and tests, and report residual risks. It can investigate and implement directly when a separate architecture plan is unnecessary. Use medium for routine implementation and high for consequential or complex domain changes.\n\nAstra is the independent reviewer and validator when behavioral or architectural risk justifies a second perspective. Give it the requirements, baseline, and resulting plan or diff; have it challenge assumptions, accounting and edge-case behavior, compatibility, and verification. Prefer an independent review over merely endorsing the implementer's self-assessment. Do not invoke every model by default or add agents solely to increase count.",
   "maxConcurrency": 8,
   "maxAgentsPerRun": 100,
   "agentTimeoutMs": 3600000
