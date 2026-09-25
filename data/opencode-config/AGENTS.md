@@ -43,7 +43,7 @@ NOTE: Don't add a "[XXXX]" prefix to PR titles you pass to the script. These may
 
 For these specific subagent use cases, override the model selection.
 
-### Token-heavy exploration: `openai/gpt-6-luna-fast#high`
+### Token-heavy exploration: `github-copilot/gpt-6-luna#high`
 
 For work that burns a lot of tokens gathering context when only the result matters, delegate to Luna. Examples include browser use, Splunk, Datadog, or Snowflake investigations, and repo discovery. Tell it exactly what to bring back, and ask for a short summary with the key evidence (queries, IDs, file paths, links) instead of raw output.
 

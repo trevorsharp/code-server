@@ -46,7 +46,7 @@
           "disabled": true
         },
         "gpt-6-luna-fast": {
-          "disabled": false
+          "disabled": true
         },
         "gpt-6-sol": {
           "disabled": true
@@ -122,10 +122,10 @@
           "disabled": true
         },
         "gpt-6-luna": {
-          "disabled": true
+          "disabled": false
         },
         "gpt-6-sol": {
-          "disabled": false
+          "disabled": true
         },
         "grok-4.5": {
           "disabled": true
@@ -147,7 +147,7 @@
       "model": "github-copilot/claude-opus-5.5#high"
     },
     "title": {
-      "model": "openai/gpt-6-luna-fast"
+      "model": "github-copilot/gpt-6-luna"
     },
     "explore": {
       "disabled": true
