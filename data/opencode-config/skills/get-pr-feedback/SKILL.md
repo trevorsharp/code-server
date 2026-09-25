@@ -1,5 +1,5 @@
 ---
-name: get-pr-feedback
+name: Get PR Feedback
 description: Fetch PR review comments from an Azure DevOps or GitHub pull request
 ---
 

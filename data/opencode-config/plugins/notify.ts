@@ -1,35 +1,22 @@
-import { tool, type Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode/plugin"
 
-const QUESTION_WAIT_NOTIFICATIONS_ENABLED = true
 const QUESTION_WAIT_TIMEOUT_MS = 5 * 60 * 1000
 
-type QuestionEvent =
-  | {
-    type: "question.asked"
-    properties: {
-      id: string
-      sessionID: string
-      questions: Array<{ question: string }>
-    }
-  }
-  | {
-    type: "question.replied" | "question.rejected"
-    properties: { requestID: string }
-  }
-
-async function sendNotification(message: string, sessionID: string, directory: string) {
+async function sendNotification(message: string, sessionID: string, signal: AbortSignal) {
   const webhookUrl = process.env.NOTIFY_SLACK_WEBHOOK_URL
   if (!webhookUrl) {
     throw new Error("NOTIFY_SLACK_WEBHOOK_URL is not configured")
   }
 
+  const serverUrl = "https://work.trs.dev"
   const response = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
     body: JSON.stringify({
       message,
       sessionId: sessionID,
-      projectId: Buffer.from(directory).toString("base64url"),
+      projectId: `server/${Buffer.from(serverUrl).toString("base64url")}`,
     }),
   })
 
@@ -38,68 +25,89 @@ async function sendNotification(message: string, sessionID: string, directory: s
   }
 }
 
-export const NotifyPlugin: Plugin = async ({ client, directory }) => {
-  const questionTimers = new Map<string, ReturnType<typeof setTimeout>>()
+export default {
+  id: "Notify",
+  async setup(ctx) {
+    const controller = new AbortController()
+    const questionTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  function cancelQuestionTimer(requestID: string) {
-    const timer = questionTimers.get(requestID)
-    if (timer) clearTimeout(timer)
-    questionTimers.delete(requestID)
-  }
+    function cancelQuestionTimer(formID: string) {
+      const timer = questionTimers.get(formID)
+      if (timer) clearTimeout(timer)
+      questionTimers.delete(formID)
+    }
 
-  return {
-    event: async ({ event }) => {
-      if (!QUESTION_WAIT_NOTIFICATIONS_ENABLED) return
-
-      const questionEvent = event as unknown as QuestionEvent
-      if (questionEvent.type === "question.asked") {
-        const question = questionEvent.properties.questions[0]?.question
-        if (!question) return
-
-        cancelQuestionTimer(questionEvent.properties.id)
-        const timer = setTimeout(async () => {
-          questionTimers.delete(questionEvent.properties.id)
-          try {
-            await sendNotification(
-              `Question for you:\n${question}`,
-              questionEvent.properties.sessionID,
-              directory,
-            )
-          } catch (error) {
-            await client.app.log({
-              body: {
-                service: "notify",
-                level: "error",
-                message: "Failed to send delayed question notification",
-                extra: { error: String(error) },
-              },
-              query: { directory },
-            })
-          }
-        }, QUESTION_WAIT_TIMEOUT_MS)
-        questionTimers.set(questionEvent.properties.id, timer)
-        return
-      }
-
-      if (questionEvent.type === "question.replied" || questionEvent.type === "question.rejected") {
-        cancelQuestionTimer(questionEvent.properties.requestID)
-      }
-    },
-    tool: {
-      notify: tool({
+    await ctx.tool.transform((editor) => {
+      editor.add({
+        name: "Notify",
         description:
           "Send Trevor a Slack notification. Use only when explicitly instructed to notify, ping, or alert Trevor.",
-        args: {
-          message: tool.schema
-            .string()
-            .describe('Brief plain-text message (markdown is unsupported). Newlines are supported using "\\n".'),
+        input: {
+          type: "object",
+          properties: {
+            message: {
+              type: "string",
+              description: 'Brief plain-text message (markdown is unsupported). Newlines are supported using "\\n".',
+            },
+          },
+          required: ["message"],
+          additionalProperties: false,
         },
-        async execute({ message }, context) {
-          await sendNotification(message, context.sessionID, context.directory)
+        options: { codemode: false },
+        async execute(input, context) {
+          const { message } = input as { message: string }
+          await sendNotification(
+            message,
+            context.sessionID,
+            AbortSignal.any([controller.signal, context.signal]),
+          )
+          return { content: "Slack notification sent to Trevor." }
+        },
+      })
+    })
 
-          return "Slack notification sent to Trevor."
-        },
-      }),
-    },
-  }
-}
+    void (async () => {
+      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+        if (controller.signal.aborted) break
+        if (event.location?.directory !== ctx.location.directory) continue
+
+        if (event.type === "form.created") {
+          const { form } = event.data
+          if (!form.sessionID.startsWith("ses")) continue
+
+          const field = form.fields.find((field) => !("hidden" in field && field.hidden))
+          const question = field?.description || field?.title || form.title
+          if (!question) continue
+
+          cancelQuestionTimer(form.id)
+          const timer = setTimeout(async () => {
+            questionTimers.delete(form.id)
+            try {
+              await sendNotification(`A question is waiting for an answer:\n\n${question}`, form.sessionID, controller.signal)
+            } catch (error) {
+              if (!controller.signal.aborted) {
+                console.error("[notify] Failed to send delayed question notification:", String(error))
+              }
+            }
+          }, QUESTION_WAIT_TIMEOUT_MS)
+          questionTimers.set(form.id, timer)
+          continue
+        }
+
+        if (event.type === "form.replied" || event.type === "form.cancelled") {
+          cancelQuestionTimer(event.data.id)
+        }
+      }
+    })().catch((error) => {
+      if (!controller.signal.aborted) {
+        console.error("[notify] Question notification event stream failed:", String(error))
+      }
+    })
+
+    return () => {
+      controller.abort()
+      for (const timer of questionTimers.values()) clearTimeout(timer)
+      questionTimers.clear()
+    }
+  },
+} satisfies Plugin.Plugin

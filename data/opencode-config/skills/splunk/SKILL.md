@@ -1,5 +1,5 @@
 ---
-name: splunk
+name: Splunk
 description: Use this when using the Splunk MCP
 ---
 

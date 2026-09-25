@@ -77,10 +77,10 @@ ENV BUN_INSTALL=/home/${USERNAME}/.bun
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14"
 
 # Install OpenCode
-RUN curl -fsSL https://opencode.ai/install | bash
-
-# Install Claude Code
-RUN curl -fsSL https://claude.ai/install.sh | bash
+ARG OPENCODE_VERSION=2.0.16
+RUN curl -fsSL https://opencode.ai/v2/install -o /tmp/install-opencode.sh \
+    && bash /tmp/install-opencode.sh --version "${OPENCODE_VERSION}" --no-modify-path \
+    && rm /tmp/install-opencode.sh
 
 # Install workspace CLI
 RUN curl -fsSL https://static.fastly.carvanatech.com/workspace-cli/install.sh | bash
@@ -92,7 +92,15 @@ RUN dotnet tool install csharpier --global --version 1.1.1
 RUN . ${NVM_DIR}/nvm.sh \
     && npx -y playwright@1.61.1 install --with-deps chromium
 
+ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:/home/${USERNAME}/.dotnet/tools:/home/${USERNAME}/.bun/bin:/home/${USERNAME}/.workspace/bin:${PATH}"
+
+RUN printf '%s\n' 'export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$HOME/.dotnet/tools:$HOME/.bun/bin:$HOME/.workspace/bin:$PATH"' >> /home/${USERNAME}/.bashrc
+
 USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends socat \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

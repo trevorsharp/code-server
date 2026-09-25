@@ -1,28 +1,53 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-env | grep -v -E '^(HOME|PWD|SHLVL|USER|LOGNAME|PATH|TERM|_)=' > /etc/environment
+user_home="/home/${USERNAME}"
+user_gid="$(id -g "${USERNAME}")"
+export HOME="${user_home}"
+export USER="${USERNAME}"
+export LOGNAME="${USERNAME}"
+. "${NVM_DIR}/nvm.sh"
+export PATH="${user_home}/projects/TrevorSharp/CustomGitCommands/scripts:${PATH}"
 
-WORKSPACES_DIR="/home/${USERNAME}/workspaces"
+printf 'PAYMENTS_TESTING_AUTH_CLIENT_SECRET=%s\n' "${PAYMENTS_TESTING_AUTH_CLIENT_SECRET:-}" > /etc/environment
 
-if [ -d "${WORKSPACES_DIR}" ]; then
-  chown "$(id -u "${USERNAME}"):$(id -g "${USERNAME}")" "${WORKSPACES_DIR}"
-fi
+for directory in workspaces .config/opencode .local/share/opencode .local/state/opencode .cache/opencode .vscode-server .azure .config/gh .git-data; do
+  mkdir -p "${user_home}/${directory}"
+  chown "${USERNAME}:${user_gid}" "${user_home}/${directory}"
+done
 
-OPENCODE_CMD="opencode"
+mkdir -p /run/sshd /etc/ssh/host_keys
+for key_type in rsa ed25519; do
+  key_file="/etc/ssh/host_keys/ssh_host_${key_type}_key"
+  if [ ! -f "${key_file}" ]; then
+    ssh-keygen -q -t "${key_type}" -N '' -f "${key_file}"
+  fi
+done
+/usr/sbin/sshd -t
 
-if [ "${OPENCODE_FORK:-0}" = "1" ]; then
-  cp /home/sharp/opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode /home/sharp/.opencode/bin/opencode-fork
-  OPENCODE_CMD="opencode-fork"
-fi
+children=()
+cleanup() {
+  trap - TERM INT
+  kill -TERM "${children[@]}" 2>/dev/null || true
+  wait "${children[@]}" 2>/dev/null || true
+}
+trap 'cleanup; exit 0' TERM INT
 
-echo "Starting OpenCode web server (using ${OPENCODE_CMD})..."
-su -l "${USERNAME}" -c "set -a; . /etc/environment; OPENCODE_DISABLE_CHANNEL_DB=1 ${OPENCODE_CMD} web > /dev/null 2>&1 &"
+echo 'Starting MCP OAuth callback relay on port 19877...'
+setpriv --reuid="${USERNAME}" --regid="${user_gid}" --init-groups \
+  socat TCP4-LISTEN:19877,bind=0.0.0.0,reuseaddr,fork TCP4:127.0.0.1:19876 &
+children+=("$!")
 
-if [ -d /home/${USERNAME}/.ssh ]; then
-    chmod 700 /home/${USERNAME}/.ssh 2>/dev/null || true
-    chmod 600 /home/${USERNAME}/.ssh/* 2>/dev/null || true
-fi
+echo 'Starting official OpenCode V2 on port 4096...'
+setpriv --reuid="${USERNAME}" --regid="${user_gid}" --init-groups \
+  opencode serve --service --hostname 0.0.0.0 --port 4096 &
+children+=("$!")
 
-echo "Starting SSH server on port 22..."
-exec /usr/sbin/sshd -D -e
+echo 'Starting SSH on port 22...'
+/usr/sbin/sshd -D -e &
+children+=("$!")
+
+status=0
+wait -n "${children[@]}" || status=$?
+cleanup
+exit "${status}"

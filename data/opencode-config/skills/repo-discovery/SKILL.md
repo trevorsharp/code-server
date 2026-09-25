@@ -1,5 +1,5 @@
 ---
-name: repo-discovery
+name: Repo Discovery
 description: Find Azure DevOps or GitHub repositories by name to inspect code locally. Should only be used after looking in the current workspace or ~/projects for the repo first.
 ---
 

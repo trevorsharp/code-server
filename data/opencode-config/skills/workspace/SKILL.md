@@ -1,5 +1,5 @@
 ---
-name: workspace
+name: Workspace
 description: Use when a task spans multiple git repositories or local folders. The workspace CLI groups git worktrees and symlinks into a named workspace folder so the whole change can be opened as one multi-folder project.
 ---
 

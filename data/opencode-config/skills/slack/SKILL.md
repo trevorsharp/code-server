@@ -1,5 +1,5 @@
 ---
-name: slack
+name: Slack
 description: Use this when using the Slack MCP
 ---
 

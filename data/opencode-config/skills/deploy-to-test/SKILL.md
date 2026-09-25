@@ -1,5 +1,5 @@
 ---
-name: deploy-to-test
+name: Deploy to Test
 description: Deploy a service to the TEST environment
 ---
 

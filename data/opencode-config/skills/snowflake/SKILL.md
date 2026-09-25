@@ -1,5 +1,5 @@
 ---
-name: snowflake
+name: Snowflake
 description: Use this when using the Snowflake MCP
 ---
 

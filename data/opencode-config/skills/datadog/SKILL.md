@@ -1,5 +1,5 @@
 ---
-name: datadog
+name: Datadog
 description: Use this when using the Datadog MCP
 ---
 

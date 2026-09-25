@@ -1,5 +1,5 @@
 ---
-name: test-purchase-ui
+name: Test Purchase UI
 description: Stage TEST purchases from PB Redux blueprints, log test users into local CheckoutUI or testazure through Chrome DevTools MCP, proxy local UI calls to selected local backends, and configure CheckoutUI or VerificationsUI testazure feature overrides.
 ---
 

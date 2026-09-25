@@ -1,8 +1,0 @@
-{
-  "enabled": true,
-  "triggerModel": "openai/gpt-6-luna-fast",
-  "triggerVariant": "high",
-  "workModel": "openai/gpt-6-sol",
-  "workVariant": "high",
-  "dataDir": "/home/sharp/.local/share/opencode/scheduled-jobs"
-}

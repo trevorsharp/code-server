@@ -1,38 +1,156 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "update": "disable",
   "share": "disabled",
   "enabled_providers": [
     "openai",
-    "claude-cli",
     "github-copilot"
   ],
-  "provider": {
+  "providers": {
     "openai": {
-      "whitelist": [
-        "gpt-6-sol",
-        "gpt-6-luna-fast",
-        "gpt-6-astra"
-      ]
-    },
-    "claude-cli": {
-      "whitelist": [
-        "claude-fable-5-1",
-        "claude-opus-5-5"
-      ]
+      "models": {
+        "gpt-5.3-codex-spark": {
+          "disabled": true
+        },
+        "gpt-5.5": {
+          "disabled": true
+        },
+        "gpt-5.5-fast": {
+          "disabled": true
+        },
+        "gpt-5.6-luna": {
+          "disabled": true
+        },
+        "gpt-5.6-luna-fast": {
+          "disabled": true
+        },
+        "gpt-5.6-sol": {
+          "disabled": true
+        },
+        "gpt-5.6-sol-fast": {
+          "disabled": true
+        },
+        "gpt-5.6-terra": {
+          "disabled": true
+        },
+        "gpt-5.6-terra-fast": {
+          "disabled": true
+        },
+        "gpt-6-astra": {
+          "disabled": false
+        },
+        "gpt-6-astra-fast": {
+          "disabled": true
+        },
+        "gpt-6-luna": {
+          "disabled": true
+        },
+        "gpt-6-luna-fast": {
+          "disabled": false
+        },
+        "gpt-6-sol": {
+          "disabled": true
+        },
+        "gpt-6-sol-fast": {
+          "disabled": true
+        }
+      }
     },
     "github-copilot": {
-      "whitelist": [
-        "gpt-6-sol",
-        "gpt-6-luna",
-        "gpt-6-astra",
-        "claude-opus-5.5"
-      ]
+      "models": {
+        "claude-haiku-4.5": {
+          "disabled": true
+        },
+        "claude-opus-4.7": {
+          "disabled": true
+        },
+        "claude-opus-4.7-fast": {
+          "disabled": true
+        },
+        "claude-opus-4.8": {
+          "disabled": true
+        },
+        "claude-opus-4.8-fast": {
+          "disabled": true
+        },
+        "claude-opus-5": {
+          "disabled": true
+        },
+        "claude-opus-5.5": {
+          "disabled": false
+        },
+        "claude-sonnet-5": {
+          "disabled": true
+        },
+        "gemini-3.5-flash": {
+          "disabled": true
+        },
+        "gemini-3.6-flash": {
+          "disabled": true
+        },
+        "gemini-3.7-flash": {
+          "disabled": true
+        },
+        "gemini-3.8-flash": {
+          "disabled": true
+        },
+        "gpt-5-mini": {
+          "disabled": true
+        },
+        "gpt-5.3-codex": {
+          "disabled": true
+        },
+        "gpt-5.4": {
+          "disabled": true
+        },
+        "gpt-5.4-mini": {
+          "disabled": true
+        },
+        "gpt-5.5": {
+          "disabled": true
+        },
+        "gpt-5.6-luna": {
+          "disabled": true
+        },
+        "gpt-5.6-sol": {
+          "disabled": true
+        },
+        "gpt-5.6-terra": {
+          "disabled": true
+        },
+        "gpt-6-astra": {
+          "disabled": true
+        },
+        "gpt-6-luna": {
+          "disabled": true
+        },
+        "gpt-6-sol": {
+          "disabled": false
+        },
+        "grok-4.5": {
+          "disabled": true
+        },
+        "grok-4.6": {
+          "disabled": true
+        },
+        "grok-4.7": {
+          "disabled": true
+        },
+        "mai-code-1.1-flash": {
+          "disabled": true
+        }
+      }
     }
   },
-  "model": "openai/gpt-6-sol",
-  "agent": {
+  "agents": {
+    "build": {
+      "model": "github-copilot/claude-opus-5.5#high"
+    },
     "title": {
       "model": "openai/gpt-6-luna-fast"
+    },
+    "explore": {
+      "disabled": true
     }
   },
   "formatter": {
@@ -49,78 +167,97 @@
       ]
     }
   },
-  "server": {
-    "port": 4096,
-    "hostname": "0.0.0.0",
-    "cors": [
-      "http://localhost:4096",
-      "https://work.trs.dev"
-    ]
-  },
-  "permission": {
-    "*": "allow"
-  },
   "mcp": {
-    "Jira": {
-      "type": "remote",
-      "url": "https://jira-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Google Workspace": {
-      "type": "remote",
-      "url": "https://gdrive-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Slack": {
-      "type": "remote",
-      "url": "https://slack-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Snowflake": {
-      "type": "remote",
-      "url": "https://snowflake-mcp.cvnacorp.com/mcp",
-      "timeout": 240000,
-      "enabled": false
-    },
-    "Splunk": {
-      "type": "remote",
-      "url": "https://splunk-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Fastlane": {
-      "type": "remote",
-      "url": "https://fastlane-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Carvana Publish": {
-      "type": "remote",
-      "url": "https://publish-mcp.cvnacorp.com/mcp",
-      "enabled": false
-    },
-    "Datadog": {
-      "type": "remote",
-      "url": "https://mcp.datadoghq.com/v1/mcp",
-      "enabled": false
-    },
-    "Figma": {
-      "type": "remote",
-      "url": "https://mcp.figma.com/mcp",
-      "enabled": false,
-      "oauth": {
-        "scope": "mcp:connect"
-      }
-    },
-    "Chrome DevTools": {
-      "type": "local",
-      "command": [
-        "bun",
-        "/home/sharp/.config/opencode/mcp/chrome-devtools.ts"
-      ],
-      "environment": {
-        "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
-        "CHROME_DEVTOOLS_EXTENSIONS": "[]"
+    "servers": {
+      "Jira": {
+        "type": "remote",
+        "url": "https://jira-mcp.cvnacorp.com/mcp",
+        "disabled": false,
+        "oauth": {
+          "callback_port": 19876
+        }
       },
-      "enabled": false
+      "Google Workspace": {
+        "type": "remote",
+        "url": "https://gdrive-mcp.cvnacorp.com/mcp",
+        "disabled": false,
+        "oauth": {
+          "callback_port": 19876
+        }
+      },
+      "Slack": {
+        "type": "remote",
+        "url": "https://slack-mcp.cvnacorp.com/mcp",
+        "disabled": false,
+        "oauth": {
+          "callback_port": 19876
+        }
+      },
+      "Snowflake": {
+        "type": "remote",
+        "url": "https://snowflake-mcp.cvnacorp.com/mcp",
+        "timeout": {
+          "catalog": 240000,
+          "execution": 240000
+        },
+        "disabled": false,
+        "oauth": {
+          "callback_port": 19876
+        }
+      },
+      "Splunk": {
+        "type": "remote",
+        "url": "https://splunk-mcp.cvnacorp.com/mcp",
+        "disabled": false,
+        "oauth": {
+          "callback_port": 19876
+        }
+      },
+      "Fastlane": {
+        "type": "remote",
+        "url": "https://fastlane-mcp.cvnacorp.com/mcp",
+        "disabled": false,
+        "oauth": {
+          "callback_port": 19876
+        }
+      },
+      "Carvana Publish": {
+        "type": "remote",
+        "url": "https://publish-mcp.cvnacorp.com/mcp",
+        "disabled": false,
+        "oauth": {
+          "callback_port": 19876
+        }
+      },
+      "Datadog": {
+        "type": "remote",
+        "url": "https://mcp.datadoghq.com/v1/mcp",
+        "disabled": false,
+        "oauth": {
+          "callback_port": 19876
+        }
+      },
+      "Figma": {
+        "type": "remote",
+        "url": "https://mcp.figma.com/mcp",
+        "oauth": false,
+        "disabled": false,
+        "headers": {
+          "Authorization": "Bearer {env:FIGMA_OAUTH_TOKEN}"
+        }
+      },
+      "Chrome DevTools": {
+        "type": "local",
+        "command": [
+          "bun",
+          "/home/sharp/.config/opencode/mcp/chrome-devtools.ts"
+        ],
+        "environment": {
+          "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
+          "CHROME_DEVTOOLS_EXTENSIONS": "[]"
+        },
+        "disabled": false
+      }
     }
   }
 }

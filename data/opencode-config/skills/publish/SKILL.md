@@ -1,5 +1,5 @@
 ---
-name: publish
+name: Publish
 description: Use when the user says "publish this", "publish that", "make this shareable", or asks to publish Markdown or an HTML page.
 ---
 

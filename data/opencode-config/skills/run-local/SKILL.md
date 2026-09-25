@@ -1,5 +1,5 @@
 ---
-name: run-local
+name: Run Local
 description: Build and run the current .NET WebApp service locally for testing or debugging
 ---
 

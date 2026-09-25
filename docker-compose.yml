@@ -1,3 +1,5 @@
+name: code-server
+
 services:
   code-server:
     build:
@@ -6,37 +8,35 @@ services:
         USERNAME: sharp
         USER_UID: 504
         USER_GID: 20
+        OPENCODE_VERSION: 2.0.16
+    init: true
     restart: unless-stopped
+    stop_grace_period: 20s
     container_name: code-server
     hostname: work-code-server
     environment:
-      - OPENCODE_FORK=1
-      - VITE_OPEN_IN_VSCODE_URL=vscode://vscode-remote/ssh-remote+code-server
-      - NOTIFY_SLACK_WEBHOOK_URL=${NOTIFY_SLACK_WEBHOOK_URL}
-      - PAYMENTS_TESTING_AUTH_CLIENT_SECRET=${PAYMENTS_TESTING_AUTH_CLIENT_SECRET}
+      NOTIFY_SLACK_WEBHOOK_URL: ${NOTIFY_SLACK_WEBHOOK_URL:-}
+      FIGMA_OAUTH_TOKEN: ${FIGMA_OAUTH_TOKEN:-}
+      PAYMENTS_TESTING_AUTH_CLIENT_SECRET: ${PAYMENTS_TESTING_AUTH_CLIENT_SECRET:-}
     ports:
-      # SSH
-      - "2222:22"
-      # OpenCode
+      - "127.0.0.1:2222:22"
       - "127.0.0.1:4096:4096"
-      # Dev Ports
       - "127.0.0.1:3000:3000"
       - "127.0.0.1:3001:3001"
       - "127.0.0.1:3002:3002"
       - "127.0.0.1:5000:5000"
       - "127.0.0.1:5001:5001"
       - "127.0.0.1:5002:5002"
-      # Chrome DevTools
       - "127.0.0.1:9222:9222"
+      - "127.0.0.1:19876:19877"
     volumes:
       - ./projects:/home/sharp/projects
+      - /Users/TSharp/Downloads:/home/sharp/Downloads
       - workspaces:/home/sharp/workspaces
-      - ./opencode:/home/sharp/opencode
-      - ~/Downloads:/home/sharp/Downloads
       - ./data/NuGet.Config:/home/sharp/.nuget/NuGet/NuGet.Config:ro
       - ./data/certs:/home/sharp/certs:ro
       - ./data/ssh:/home/sharp/.ssh:ro
-      - ./data/ssh-host:/etc/ssh/host_keys:ro
+      - ./data/ssh-host:/etc/ssh/host_keys
       - ./data/gitconfig:/home/sharp/.gitconfig:ro
       - ./data/git-data:/home/sharp/.git-data
       - ./data/vscode-server:/home/sharp/.vscode-server
@@ -45,13 +45,8 @@ services:
       - ./data/opencode-config:/home/sharp/.config/opencode
       - ./data/opencode-storage:/home/sharp/.local/share/opencode
       - ./data/workspace-config:/home/sharp/.config/workspace
-      - ./data/claude:/home/sharp/.claude
-      - ./data/AGENTS.md:/home/sharp/.config/opencode/AGENTS.md:ro
-      - ./data/AGENTS.md:/home/sharp/.claude/CLAUDE.md:ro
-      - ./data/skills:/home/sharp/.config/opencode/skills
-      - ./data/skills:/home/sharp/.claude/skills
 
 volumes:
   workspaces:
-    name: code-server-workspaces
     external: true
+    name: code-server-v2_workspaces
