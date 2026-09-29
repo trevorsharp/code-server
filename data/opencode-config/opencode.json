@@ -46,7 +46,7 @@
           "disabled": true
         },
         "gpt-6-luna-fast": {
-          "disabled": true
+          "disabled": false
         },
         "gpt-6-sol": {
           "disabled": true
@@ -81,6 +81,9 @@
         },
         "claude-sonnet-5": {
           "disabled": true
+        },
+        "claude-sonnet-5.5": {
+          "disabled": false
         },
         "gemini-3.5-flash": {
           "disabled": true
@@ -147,7 +150,7 @@
       "model": "github-copilot/claude-opus-5.5#high"
     },
     "title": {
-      "model": "github-copilot/gpt-6-luna"
+      "model": "openai/gpt-6-luna-fast"
     },
     "explore": {
       "disabled": true
