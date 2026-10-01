@@ -144,7 +144,7 @@ export default {
 
     await ctx.tool.transform((editor) => {
       editor.add({
-        name: "ComputerUse",
+        name: "Computer Use",
         description:
           "Delegate a desktop or authenticated browser task to the host machine. Only run one computer use task at a time. Each task requires the user to allow it via a notification on the host machine. Do not automatically retry interrupted, rejected, or cancelled tasks. The tool call will immediately return a requestId and run the task in the background you will be notified async once the task is completed.",
         input: {
@@ -235,7 +235,7 @@ export default {
         },
       })
       editor.add({
-        name: "CancelComputerUse",
+        name: "Cancel Computer Use",
         description:
           "Request cancellation of a computer-use task by its requestId. Use when the task is no longer needed or the user asks to stop it. Cancellation does not undo completed actions. A finished task retains its existing result; an active task may remain cancelling until it stops. The original background task will report its final status when monitoring is still active.",
         input: {
