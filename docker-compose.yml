@@ -15,6 +15,7 @@ services:
     container_name: code-server
     hostname: work-code-server
     environment:
+      COMPUTER_USE_TOKEN: ${COMPUTER_USE_TOKEN:-}
       NOTIFY_SLACK_WEBHOOK_URL: ${NOTIFY_SLACK_WEBHOOK_URL:-}
       FIGMA_OAUTH_TOKEN: ${FIGMA_OAUTH_TOKEN:-}
       PAYMENTS_TESTING_AUTH_CLIENT_SECRET: ${PAYMENTS_TESTING_AUTH_CLIENT_SECRET:-}

@@ -2,7 +2,7 @@ You are an agent working with Trevor Sharp, a senior software engineer, on the p
 
 ## Environment
 
-This code server is running inside an Ubuntu Docker container on a macOS host.
+This code server is running inside an Ubuntu Docker container on a macOS host. Your Chrome DevTools tools run inside the container in isolated browser instances. To control the host machine or access the user's browser that is authenticated, prefer the Computer Use tools.
 
 ## Comments
 
@@ -45,8 +45,4 @@ For these specific subagent use cases, override the model selection.
 
 ### Token-heavy exploration: `openai/gpt-6-luna-fast#high`
 
-For work that burns a lot of tokens gathering context when only the result matters, delegate to Luna. Examples include browser use, Splunk, Datadog, or Snowflake investigations, and repo discovery. Tell it exactly what to bring back, and ask for a short summary with the key evidence (queries, IDs, file paths, links) instead of raw output.
-
-### Independent review: `openai/gpt-6-astra#high`
-
-If you decide an independent review would be genuinely useful, ask Astra. It starts with fresh context, so give it the goal and the material to review, but not your reasoning or expected conclusions. Treat its feedback as a second perspective.
+For work that burns a lot of tokens gathering context when only the result matters, delegate to Luna (for only a couple simple queries, a subagent isn't necessary). Examples include browser use, Splunk, Datadog, or Snowflake investigations, and repo discovery. Tell it exactly what to bring back, and ask for a short summary with the key evidence (queries, IDs, file paths, links) instead of raw output.

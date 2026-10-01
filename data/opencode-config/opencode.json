@@ -53,6 +53,12 @@
         },
         "gpt-6-sol-fast": {
           "disabled": true
+        },
+        "gpt-6.1-sol": {
+          "disabled": false
+        },
+        "gpt-6.1-sol-fast": {
+          "disabled": true
         }
       }
     },
@@ -125,9 +131,12 @@
           "disabled": true
         },
         "gpt-6-luna": {
-          "disabled": false
+          "disabled": true
         },
         "gpt-6-sol": {
+          "disabled": true
+        },
+        "gpt-6.1-sol": {
           "disabled": true
         },
         "grok-4.5": {
@@ -147,7 +156,7 @@
   },
   "agents": {
     "build": {
-      "model": "github-copilot/claude-opus-5.5#high"
+      "model": "openai/gpt-6.1-sol#high"
     },
     "title": {
       "model": "openai/gpt-6-luna-fast"
@@ -175,7 +184,6 @@
       "Jira": {
         "type": "remote",
         "url": "https://jira-mcp.cvnacorp.com/mcp",
-        "disabled": false,
         "oauth": {
           "callback_port": 19876
         }
@@ -183,7 +191,6 @@
       "Google Workspace": {
         "type": "remote",
         "url": "https://gdrive-mcp.cvnacorp.com/mcp",
-        "disabled": false,
         "oauth": {
           "callback_port": 19876
         }
@@ -191,7 +198,6 @@
       "Slack": {
         "type": "remote",
         "url": "https://slack-mcp.cvnacorp.com/mcp",
-        "disabled": false,
         "oauth": {
           "callback_port": 19876
         }
@@ -199,11 +205,6 @@
       "Snowflake": {
         "type": "remote",
         "url": "https://snowflake-mcp.cvnacorp.com/mcp",
-        "timeout": {
-          "catalog": 240000,
-          "execution": 240000
-        },
-        "disabled": false,
         "oauth": {
           "callback_port": 19876
         }
@@ -211,7 +212,6 @@
       "Splunk": {
         "type": "remote",
         "url": "https://splunk-mcp.cvnacorp.com/mcp",
-        "disabled": false,
         "oauth": {
           "callback_port": 19876
         }
@@ -219,7 +219,6 @@
       "Fastlane": {
         "type": "remote",
         "url": "https://fastlane-mcp.cvnacorp.com/mcp",
-        "disabled": false,
         "oauth": {
           "callback_port": 19876
         }
@@ -227,7 +226,6 @@
       "Carvana Publish": {
         "type": "remote",
         "url": "https://publish-mcp.cvnacorp.com/mcp",
-        "disabled": false,
         "oauth": {
           "callback_port": 19876
         }
@@ -235,7 +233,6 @@
       "Datadog": {
         "type": "remote",
         "url": "https://mcp.datadoghq.com/v1/mcp",
-        "disabled": false,
         "oauth": {
           "callback_port": 19876
         }
@@ -244,7 +241,6 @@
         "type": "remote",
         "url": "https://mcp.figma.com/mcp",
         "oauth": false,
-        "disabled": false,
         "headers": {
           "Authorization": "Bearer {env:FIGMA_OAUTH_TOKEN}"
         }
@@ -258,8 +254,7 @@
         "environment": {
           "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
           "CHROME_DEVTOOLS_EXTENSIONS": "[]"
-        },
-        "disabled": false
+        }
       }
     }
   }

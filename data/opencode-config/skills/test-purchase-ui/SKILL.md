@@ -1,11 +1,19 @@
 ---
 name: Test Purchase UI
-description: Stage TEST purchases from PB Redux blueprints, log test users into local CheckoutUI or testazure through Chrome DevTools MCP, proxy local UI calls to selected local backends, and configure CheckoutUI or VerificationsUI testazure feature overrides.
+description: Stage TEST purchases from PB Redux blueprints or TestBot when requested, log test users into local CheckoutUI or testazure through Chrome DevTools MCP, proxy local UI calls to selected local backends, and configure CheckoutUI or VerificationsUI testazure feature overrides.
 ---
 
 # Test Purchase UI
 
 Executable: [`purchase-ui.ts`](./purchase-ui.ts). Resolve the linked file relative to this skill before running it.
+
+## TestBot In The Host Browser
+
+When the user asks to use TestBot in the host's logged-in browser, use the Computer Use tools rather than the isolated Chrome DevTools browser in the container.
+
+Open <https://apps.carvanatech.com/qe/testlane/testbot>.
+
+TestBot's **Purchase Stage** is the furthest step to be completed by TestBot, not the step where the user will begin. For a purchase staged just before a particular step, select the preceding step as **Purchase Stage** so TestBot does not complete the requested stopping step.
 
 ## Stage A Blueprint
 
