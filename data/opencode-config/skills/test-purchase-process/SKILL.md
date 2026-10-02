@@ -1,29 +1,20 @@
 ---
-name: Test Purchase UI
-description: Stage TEST purchases from PB Redux blueprints or TestBot when requested, log test users into local CheckoutUI or testazure through Chrome DevTools MCP, proxy local UI calls to selected local backends, and configure CheckoutUI or VerificationsUI testazure feature overrides.
+name: Test Purchase Process
+description: Create TEST purchases through TestLane MCP, log test users into local CheckoutUI or testazure through Chrome DevTools MCP, proxy local UI calls to selected local backends, and configure CheckoutUI or VerificationsUI testazure feature overrides.
 ---
 
-# Test Purchase UI
+# Test Purchase Process
 
-Executable: [`purchase-ui.ts`](./purchase-ui.ts). Resolve the linked file relative to this skill before running it.
+Use TestLane MCP for test data creation. Executable: [`purchase-ui.ts`](./purchase-ui.ts) handles browser login and local UI setup only. Resolve the linked file relative to this skill before running it.
 
-## TestBot In The Host Browser
+## Create A Test Purchase
 
-When the user asks to use TestBot in the host's logged-in browser, use the Computer Use tools rather than the isolated Chrome DevTools browser in the container.
+Use the `TestLane` MCP tools for purchase creation and follow the MCP's own instructions for payloads, requirements checks, dispatch, and polling. Our workflow differs in these ways:
 
-Open <https://apps.carvanatech.com/qe/testlane/testbot>.
-
-TestBot's **Purchase Stage** is the furthest step to be completed by TestBot, not the step where the user will begin. For a purchase staged just before a particular step, select the preceding step as **Purchase Stage** so TestBot does not complete the requested stopping step.
-
-## Stage A Blueprint
-
-Use the user-provided blueprint ID unchanged:
-
-```bash
-purchase-ui.ts stage --blueprint-id <id>
-```
-
-The command fetches the blueprint, runs its requirements gate, executes the workflow once, and returns `customerId`, optional `purchaseId`, and `requestId`.
+- Never load or use project playbooks. Do not look up a project or require project membership just to create a purchase.
+- Execute a supplied blueprint ID unchanged; do not substitute another blueprint or a ready-made account.
+- Use the browser login helper below, not magic links. Prefer dispatch tools, which mint no links; set `includeMagicLink: false` on synchronous staging/execution tools. Do not use `testbot_create_test_data`, which always mints a link, unless a magic link is explicitly requested.
+- For the login handoff, use `results.data.customer_details.user_id` as `--customer-id` and `results.data.purchase_details.purchase_id` as the purchase ID. If the summary omits these, read the same run with `testbot_get_run` and `verbose: true`. Never substitute the internal workflow variable also named `purchase_id`.
 
 ## Log In
 

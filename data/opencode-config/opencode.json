@@ -255,6 +255,14 @@
           "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
           "CHROME_DEVTOOLS_EXTENSIONS": "[]"
         }
+      },
+      "TestLane": {
+        "type": "remote",
+        "url": "https://testlane-mcp.cvnacorp.com/mcp",
+        "oauth": {
+          "callback_port": 19876,
+          "scope": "testlanemcp.access"
+        }
       }
     }
   }

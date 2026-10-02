@@ -41,15 +41,12 @@ interface HttpsState {
 
 const URLS = {
   token: 'https://apps.carvanatech.com/edge/authserver/connect/token',
-  pb: 'https://apps.carvanatech.com/qe/pbredux',
   authCookies: 'https://apps.carvanatech.com/oec/paymentstesting/api/v1/testazure/auth-cookies'
 };
-const CONSUMER_USER = 'trevor.sharp@carvana.com';
 const API_AUDIENCE = 'https://carvana-auth-test.azurewebsites.net/identity/resources';
 const IMPERSONATOR_USER_ID = '3d83057c-1dfa-449b-82df-82d83766f965';
 
 const HELP = `Usage:
-  purchase-ui.ts stage --blueprint-id ID
   purchase-ui.ts login --customer-id ID --host local|local-https|testazure --browser-port PORT [--secure-port PORT] [--proxy-url URL] [--impersonate]
   purchase-ui.ts proxy start --port PORT --route PATH=URL [--route PATH=URL ...]
   purchase-ui.ts proxy status --port PORT
@@ -195,33 +192,19 @@ async function customerApiJwt(customerId: string, impersonate: boolean): Promise
   return jwt;
 }
 
-async function serviceRequest(
-  url: string,
-  {
-    method = 'GET',
-    body,
-    consumerUser,
-    timeoutMs = 30_000
-  }: {
-    method?: string;
-    body?: unknown;
-    consumerUser?: string;
-    timeoutMs?: number;
-  } = {}
-): Promise<unknown> {
+async function authCookies(customerId: string, impersonate: boolean): Promise<AuthCookie[]> {
   const token = await authenticate();
   let response: Response;
   try {
-    response = await fetch(url, {
-      method,
+    response = await fetch(URLS.authCookies, {
+      method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
-        ...(consumerUser ? { 'Consumer-Source': 'opencode-ui-testing', 'Consumer-User': consumerUser } : {}),
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
+        'Content-Type': 'application/json'
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs)
+      body: JSON.stringify({ customerId, impersonate }),
+      signal: AbortSignal.timeout(30_000)
     });
   } catch {
     throw new CliError('The TEST request could not be completed.');
@@ -229,14 +212,6 @@ async function serviceRequest(
 
   const value = await responseValue(response);
   if (!response.ok) throw new CliError(`TEST API returned HTTP ${response.status}.`);
-  return value;
-}
-
-async function authCookies(customerId: string, impersonate: boolean): Promise<AuthCookie[]> {
-  const value = await serviceRequest(URLS.authCookies, {
-    method: 'POST',
-    body: { customerId, impersonate }
-  });
   if (!Array.isArray(value)) throw new CliError('PaymentsTesting returned an unexpected response.');
   const cookies = value.map(cookie => {
     const item = record(cookie) ?? {};
@@ -602,84 +577,6 @@ async function registerProxyTokens(proxyUrlValue: string, cookies: AuthCookie[],
   if (!response.ok) throw new CliError(`Local backend proxy rejected token registration with HTTP ${response.status}.`);
 }
 
-async function stage(options: Options): Promise<void> {
-  const blueprintId = required(options, 'blueprintId');
-
-  const blueprint = record(
-    await serviceRequest(`${URLS.pb}/api/v1/blueprints/${encodeURIComponent(blueprintId)}`, { consumerUser: CONSUMER_USER })
-  );
-  const attributes = record(blueprint?.workflow_attributes ?? blueprint?.workflowAttributes);
-  const inputData = record(attributes?.input_data);
-  if (typeof attributes?.stage !== 'string' || !inputData) {
-    throw new CliError('Blueprint does not contain runnable workflow attributes.');
-  }
-  if (attributes.stage.toLowerCase() === 'completesale') {
-    throw new CliError('The completesale stage is not supported.');
-  }
-  if (attributes.endpoint_overrides !== undefined && (!Array.isArray(attributes.endpoint_overrides) || attributes.endpoint_overrides.length)) {
-    throw new CliError('Blueprint endpoint overrides are not supported.');
-  }
-
-  const workflow = {
-    ...structuredClone(attributes),
-    stage: attributes.stage,
-    input_data: inputData,
-    request_id: crypto.randomUUID(),
-    consumer_type: 'mcp',
-    consumer_metadata: null,
-    endpoint_overrides: [],
-    enable_performance_tracking: false
-  };
-  const requirements = record(
-    await serviceRequest(`${URLS.pb}/api/v1/workflow/requirements`, {
-      method: 'POST',
-      body: workflow,
-      consumerUser: CONSUMER_USER
-    })
-  );
-  const rtg = record(requirements?.rtg);
-  const summary = record(requirements?.summary);
-  if (
-    !requirements ||
-    !['success', 'warning'].includes(String(requirements.status)) ||
-    rtg?.eligible !== true ||
-    (summary?.can_proceed !== undefined && summary.can_proceed !== true) ||
-    (requirements.errors !== undefined && (!Array.isArray(requirements.errors) || requirements.errors.length > 0))
-  ) {
-    throw new CliError('PB Redux requirements do not allow this workflow.');
-  }
-
-  const workflowResponse = await serviceRequest(`${URLS.pb}/api/v1/workflow`, {
-    method: 'POST',
-    body: workflow,
-    consumerUser: CONSUMER_USER,
-    timeoutMs: 600_000
-  });
-
-  const response = record(workflowResponse);
-  const results = record(response?.results);
-  const shapingInfo = record(results?._shaping_info);
-  const data = record(results?.data);
-  const customerId = record(data?.customer_details)?.user_id;
-  const purchaseId = record(data?.purchase_details)?.purchase_id;
-  const requestId = response?.request_id;
-  if (
-    results?.status !== 'success' ||
-    shapingInfo?.consumer_type !== 'mcp' ||
-    typeof customerId !== 'string' ||
-    typeof requestId !== 'string' ||
-    (purchaseId != null && !['string', 'number'].includes(typeof purchaseId))
-  ) {
-    throw new CliError('PB Redux returned an unexpected workflow result.');
-  }
-
-  output({
-    customerId,
-    ...(purchaseId == null ? {} : { purchaseId: String(purchaseId) }),
-    requestId
-  });
-}
-
 async function browserTarget(browserPort: string, origin: string): Promise<string> {
   const port = Number(browserPort);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new CliError('Browser port must be between 1 and 65535.', 2);
@@ -873,7 +770,6 @@ async function main(): Promise<void> {
     process.stdout.write(HELP);
     return;
   }
-  if (command === 'stage') return stage(parseOptions(values, ['blueprintId']));
   if (command === 'login') return login(parseOptions(values, ['customerId', 'host', 'browserPort', 'securePort', 'proxyUrl', 'impersonate']));
   if (command === 'proxy') return proxyCommand(values);
   if (command === 'https') return httpsCommand(values);
