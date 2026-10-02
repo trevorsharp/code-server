@@ -146,7 +146,7 @@ export default {
       editor.add({
         name: "Computer Use",
         description:
-          "Delegate a desktop or authenticated browser task to the host machine. Only run one computer use task at a time. Each task requires the user to allow it via a notification on the host machine. Do not automatically retry interrupted, rejected, or cancelled tasks. The tool call will immediately return a requestId and run the task in the background you will be notified async once the task is completed.",
+          "Delegate a computer or browser task to the host machine. Only run one computer use task at a time. Each task requires the user to allow it via a notification on the host machine. Do not automatically retry interrupted, rejected, or cancelled tasks. The tool call will immediately return a requestId and run the task in the background you will be notified async once the task is completed.",
         input: {
           type: "object",
           properties: {
@@ -156,7 +156,7 @@ export default {
               type: "string",
             },
             task: {
-              description: "Full prompt / instructions for the computer use agent.",
+              description: "Full prompt / instructions for the computer use agent. The agent does not have any of the existing context or files so assume it is starting from a blank state.",
               maxLength: 16384,
               minLength: 1,
               type: "string",
